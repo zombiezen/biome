@@ -39,8 +39,8 @@ func TestWriteFile(t *testing.T) {
 			name: "Local",
 			newBiome: func(dir string) Biome {
 				return Local{
-					PackageDir: dir,
-					HomeDir:    junkHome,
+					WorkDir: dir,
+					HomeDir: junkHome,
 				}
 			},
 		},
@@ -48,8 +48,8 @@ func TestWriteFile(t *testing.T) {
 			name: "Fallback",
 			newBiome: func(dir string) Biome {
 				return forceFallback{Local{
-					PackageDir: dir,
-					HomeDir:    junkHome,
+					WorkDir: dir,
+					HomeDir: junkHome,
 				}}
 			},
 		},
@@ -57,8 +57,8 @@ func TestWriteFile(t *testing.T) {
 			name: "Unsupported",
 			newBiome: func(dir string) Biome {
 				return unsupported{Local{
-					PackageDir: dir,
-					HomeDir:    junkHome,
+					WorkDir: dir,
+					HomeDir: junkHome,
 				}}
 			},
 		},
@@ -98,8 +98,8 @@ func TestMkdirAll(t *testing.T) {
 			name: "Local",
 			newBiome: func(dir string) Biome {
 				return Local{
-					PackageDir: dir,
-					HomeDir:    junkHome,
+					WorkDir: dir,
+					HomeDir: junkHome,
 				}
 			},
 		},
@@ -107,8 +107,8 @@ func TestMkdirAll(t *testing.T) {
 			name: "Fallback",
 			newBiome: func(dir string) Biome {
 				return forceFallback{Local{
-					PackageDir: dir,
-					HomeDir:    junkHome,
+					WorkDir: dir,
+					HomeDir: junkHome,
 				}}
 			},
 		},
@@ -116,8 +116,8 @@ func TestMkdirAll(t *testing.T) {
 			name: "Unsupported",
 			newBiome: func(dir string) Biome {
 				return unsupported{Local{
-					PackageDir: dir,
-					HomeDir:    junkHome,
+					WorkDir: dir,
+					HomeDir: junkHome,
 				}}
 			},
 		},
@@ -170,22 +170,22 @@ func TestEvalSymlinks(t *testing.T) {
 		{
 			name: "Local",
 			bio: Local{
-				PackageDir: dir,
-				HomeDir:    home,
+				WorkDir: dir,
+				HomeDir: home,
 			},
 		},
 		{
 			name: "Fallback",
 			bio: forceFallback{Local{
-				PackageDir: dir,
-				HomeDir:    home,
+				WorkDir: dir,
+				HomeDir: home,
 			}},
 		},
 		{
 			name: "Unsupported",
 			bio: unsupported{Local{
-				PackageDir: dir,
-				HomeDir:    home,
+				WorkDir: dir,
+				HomeDir: home,
 			}},
 		},
 	}

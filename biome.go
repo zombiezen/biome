@@ -94,9 +94,9 @@ const (
 
 // Dirs holds paths to special directories in a Context.
 type Dirs struct {
-	// Package is the absolute path of the package directory.
+	// Work is the absolute path of the biome's working directory.
 	// Biomes guarantee this directory exists.
-	Package string
+	Work string
 
 	// Home is the absolute path of the build HOME directory.
 	// Biomes guarantee this directory exists.
@@ -114,8 +114,8 @@ type Invocation struct {
 	Argv []string
 
 	// Dir is the directory to execute the program in. Paths are resolved relative to
-	// the package directory. If empty, then it will be executed in the package
-	// directory. It is separated by the biome's path separator.
+	// the biome's working directory. If empty, then it will be executed in the
+	// biome's working directory. It is separated by the biome's path separator.
 	Dir string
 
 	// Env specifies additional environment variables to send to the program.
@@ -145,9 +145,8 @@ type Invocation struct {
 // Local is a biome that executes processes in a directory on the
 // local machine.
 type Local struct {
-	// PackageDir is the absolute path to a directory containing the source files
-	// of the package.
-	PackageDir string
+	// WorkDir is the absolute path to the biome's working directory.
+	WorkDir string
 
 	// HomeDir is the absolute path to a directory that should be used as HOME.
 	// This directory may or may not exist. It SHOULD NOT be the user's actual
@@ -166,16 +165,16 @@ func (l Local) Describe() *Descriptor {
 
 // Dirs returns special directories.
 func (l Local) Dirs() *Dirs {
-	if !filepath.IsAbs(l.PackageDir) {
-		panic("Local.PackageDir is not absolute")
+	if !filepath.IsAbs(l.WorkDir) {
+		panic("Local.WorkDir is not absolute")
 	}
 	if !filepath.IsAbs(l.HomeDir) {
 		panic("Local.HomeDir is not absolute")
 	}
 	return &Dirs{
-		Package: l.PackageDir,
-		Home:    l.HomeDir,
-		Tools:   filepath.Join(l.HomeDir, ".cache", "yb", "tools"),
+		Work:  l.WorkDir,
+		Home:  l.HomeDir,
+		Tools: filepath.Join(l.HomeDir, ".cache", "yb", "tools"),
 	}
 }
 
@@ -188,7 +187,7 @@ func (l Local) Run(ctx context.Context, invoke *Invocation) error {
 	log.Debugf(ctx, "Environment:\n%v", invoke.Env)
 	dir := invoke.Dir
 	if !filepath.IsAbs(invoke.Dir) {
-		dir = filepath.Join(l.PackageDir, invoke.Dir)
+		dir = filepath.Join(l.WorkDir, invoke.Dir)
 	}
 	program, err := l.lookPath(invoke.Env, dir, invoke.Argv[0])
 	if err != nil {

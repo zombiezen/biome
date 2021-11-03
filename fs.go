@@ -38,14 +38,14 @@ func CleanPath(bio Biome, path string) string {
 }
 
 // AbsPath returns an absolute representation of path. If the path is not absolute
-// it will be joined with the package directory to turn it into an absolute
+// it will be joined with the biome's working directory to turn it into an absolute
 // path. The absolute path name for a given file is not guaranteed to be unique.
 // AbsPath calls Clean on the result.
 func AbsPath(bio Biome, path string) string {
 	if bio.IsAbsPath(path) {
 		return CleanPath(bio, path)
 	}
-	return bio.JoinPath(bio.Dirs().Package, path)
+	return bio.JoinPath(bio.Dirs().Work, path)
 }
 
 type fileWriter interface {
@@ -53,7 +53,7 @@ type fileWriter interface {
 }
 
 // WriteFile copies a file to the biome. Paths are resolved relative to
-// the package directory.
+// the biome's working directory.
 //
 // If the biome has a method
 // `WriteFile(ctx context.Context, path string, src io.Reader) error`,
@@ -127,7 +127,7 @@ type symlinkEvaler interface {
 }
 
 // EvalSymlinks returns the path name after the evaluation of any symbolic links.
-// Paths are resolved relative to the package directory. EvalSymlinks calls
+// Paths are resolved relative to the work directory. EvalSymlinks calls
 // Clean on the result. If the path does not exist, EvalSymlinks returns an
 // error.
 //

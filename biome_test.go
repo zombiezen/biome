@@ -61,11 +61,11 @@ func TestLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packageDir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(packageDir, "foo"), 0777); err != nil {
+	workDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workDir, "foo"), 0777); err != nil {
 		t.Fatal(err)
 	}
-	if err := ioutil.WriteFile(filepath.Join(packageDir, "foo", "xyzzy"), trueExe, 0777); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(workDir, "foo", "xyzzy"), trueExe, 0777); err != nil {
 		t.Fatal(err)
 	}
 	homeDir := t.TempDir()
@@ -142,8 +142,8 @@ func TestLocal(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := testlog.WithTB(context.Background(), t)
 			l := Local{
-				PackageDir: packageDir,
-				HomeDir:    homeDir,
+				WorkDir: workDir,
+				HomeDir: homeDir,
 			}
 			if err := l.Run(ctx, test.invoke); err != nil {
 				t.Log("Run:", err)
