@@ -174,7 +174,7 @@ func (l Local) Dirs() *Dirs {
 	return &Dirs{
 		Work:  l.WorkDir,
 		Home:  l.HomeDir,
-		Tools: filepath.Join(l.HomeDir, ".cache", "yb", "tools"),
+		Tools: filepath.Join(l.HomeDir, ".cache", "zombiezen-biome", "tools"),
 	}
 }
 
