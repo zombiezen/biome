@@ -31,18 +31,19 @@ import (
 	"zombiezen.com/go/biome"
 	"zombiezen.com/go/biome/downloader"
 	"zombiezen.com/go/biome/internal/extract"
+	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-type scriptCommand struct {
-	home    string
+type installCommand struct {
+	biomeID string
 	script  string
 	version string
 }
 
-func newScriptCommand() *cobra.Command {
-	c := new(scriptCommand)
+func newInstallCommand() *cobra.Command {
+	c := new(installCommand)
 	cmd := &cobra.Command{
-		Use:                   "script --home=DIR [options] SCRIPT VERSION",
+		Use:                   "install [options] --biome=ID SCRIPT VERSION",
 		Short:                 "run an installer script",
 		Args:                  cobra.ExactArgs(2),
 		DisableFlagsInUseLine: true,
@@ -54,17 +55,30 @@ func newScriptCommand() *cobra.Command {
 			return c.run(cmd.Context())
 		},
 	}
-	cmd.Flags().StringVar(&c.home, "home", "", "home directory to use inside biome")
+	cmd.Flags().StringVarP(&c.biomeID, "biome", "b", "", "biome to run inside")
 	return cmd
 }
 
-func (c *scriptCommand) run(ctx context.Context) error {
-	if c.home == "" {
-		return fmt.Errorf("missing --home option")
+func (c *installCommand) run(ctx context.Context) (err error) {
+	if c.biomeID == "" {
+		return fmt.Errorf("missing --biome option")
 	}
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	defer sqlitex.Save(db)(&err)
+	if err := verifyBiomeExists(db, c.biomeID); err != nil {
+		return err
+	}
+	env, err := readBiomeEnvironment(db, c.biomeID)
+	if err != nil {
+		return err
+	}
+
 	bio := biome.Local{}
-	var err error
-	bio.HomeDir, err = filepath.Abs(c.home)
+	bio.HomeDir, err = findBiomeDir(c.biomeID)
 	if err != nil {
 		return err
 	}
@@ -103,7 +117,7 @@ func (c *scriptCommand) run(ctx context.Context) error {
 	if cachePath == "" {
 		return fmt.Errorf("%v not set", xdgdir.Cache)
 	}
-	myDownloader := downloader.New(filepath.Join(cachePath, "zombiezen-biome", "downloads"))
+	myDownloader := downloader.New(filepath.Join(cachePath, cacheSubdirName, "downloads"))
 	installReturnValue, err := starlark.Call(
 		thread,
 		installFunc,
@@ -115,6 +129,7 @@ func (c *scriptCommand) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	installReturn, ok := installReturnValue.(*envValue)
 	if !ok {
 		return fmt.Errorf("`install` returned a %s instead of Environment", installReturnValue.Type())
@@ -123,14 +138,14 @@ func (c *scriptCommand) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("install return value: %w", err)
 	}
-	if _, err := os.Stdout.Write(toEnvFile(installEnv)); err != nil {
+	if err := writeBiomeEnvironment(db, c.biomeID, env.Merge(installEnv)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func toEnvFile(e *biome.Environment) []byte {
-	if e == nil {
+func toEnvFile(e biome.Environment) []byte {
+	if e.IsEmpty() {
 		return nil
 	}
 	f := new(ini.File)
@@ -249,18 +264,18 @@ func (ev *envValue) AttrNames() []string {
 	}
 }
 
-func (ev *envValue) toEnvironment() (*biome.Environment, error) {
-	e := new(biome.Environment)
+func (ev *envValue) toEnvironment() (biome.Environment, error) {
+	var e biome.Environment
 	if n := ev.vars.Len(); n > 0 {
 		e.Vars = make(map[string]string, n)
 		for _, kv := range ev.vars.Items() {
 			k, ok := starlark.AsString(kv[0])
 			if !ok {
-				return nil, fmt.Errorf("invalid Environment.vars key %v", kv[0])
+				return biome.Environment{}, fmt.Errorf("invalid Environment.vars key %v", kv[0])
 			}
 			v, ok := starlark.AsString(kv[1])
 			if !ok {
-				return nil, fmt.Errorf("invalid Environment.vars value %v for key %q", kv[1], k)
+				return biome.Environment{}, fmt.Errorf("invalid Environment.vars value %v for key %q", kv[1], k)
 			}
 			e.Vars[k] = v
 		}
@@ -269,7 +284,7 @@ func (ev *envValue) toEnvironment() (*biome.Environment, error) {
 		pv := ev.appendPath.Index(i)
 		p, ok := starlark.AsString(pv)
 		if !ok {
-			return nil, fmt.Errorf("invalid Environment.appendPath[%d] value %v", i, pv)
+			return biome.Environment{}, fmt.Errorf("invalid Environment.appendPath[%d] value %v", i, pv)
 		}
 		e.AppendPath = append(e.AppendPath, p)
 	}
@@ -277,7 +292,7 @@ func (ev *envValue) toEnvironment() (*biome.Environment, error) {
 		pv := ev.prependPath.Index(i)
 		p, ok := starlark.AsString(pv)
 		if !ok {
-			return nil, fmt.Errorf("invalid Environment.prependPath[%d] value %v", i, pv)
+			return biome.Environment{}, fmt.Errorf("invalid Environment.prependPath[%d] value %v", i, pv)
 		}
 		e.PrependPath = append(e.PrependPath, p)
 	}

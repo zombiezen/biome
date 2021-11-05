@@ -18,14 +18,28 @@ package main
 
 import (
 	"context"
+	"embed"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
 	"sync"
 
 	"github.com/spf13/cobra"
+	"go4.org/xdgdir"
 	"golang.org/x/sys/unix"
+	"zombiezen.com/go/biome"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/sqlite"
+	"zombiezen.com/go/sqlite/sqlitemigration"
+	"zombiezen.com/go/sqlite/sqlitex"
 )
+
+const cacheSubdirName = "zombiezen-biome"
+
+const sqliteTimestampFormatMillis = "2006-01-02 15:04:05.999"
 
 func main() {
 	root := &cobra.Command{
@@ -39,7 +53,11 @@ func main() {
 		ensureLogger(*debug)
 	}
 	root.AddCommand(
-		newScriptCommand(),
+		newCreateCommand(),
+		newDestroyCommand(),
+		newInstallCommand(),
+		newListCommand(),
+		newRunCommand(),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), unix.SIGTERM, unix.SIGINT)
@@ -65,4 +83,224 @@ func ensureLogger(debug bool) {
 			Output: log.New(os.Stderr, "biome: ", 0, nil),
 		})
 	})
+}
+
+func openDB(ctx context.Context) (*sqlite.Conn, error) {
+	cacheDir := xdgdir.Cache.Path()
+	if cacheDir == "" {
+		return nil, fmt.Errorf("open database: %v not defined", xdgdir.Cache)
+	}
+	dbPath := filepath.Join(cacheDir, cacheSubdirName, "biomes.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o744); err != nil {
+		return nil, fmt.Errorf("open database: %v", err)
+	}
+	conn, err := sqlite.OpenConn(dbPath, sqlite.OpenCreate, sqlite.OpenReadWrite, sqlite.OpenWAL, sqlite.OpenNoMutex)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %v", err)
+	}
+	conn.SetInterrupt(ctx.Done())
+	if err := sqlitex.ExecTransient(conn, "PRAGMA foreign_keys = on;", nil); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open database: %v", err)
+	}
+	err = conn.CreateFunction("regexp", &sqlite.FunctionImpl{
+		NArgs:         2,
+		Deterministic: true,
+		AllowIndirect: true,
+		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
+			// First: attempt to retrieve the compiled regexp from a previous call.
+			re, ok := ctx.AuxData(0).(*regexp.Regexp)
+			if !ok {
+				// Auxiliary data not present. Either this is the first call with this
+				// argument, or SQLite has discarded the auxiliary data.
+				var err error
+				re, err = regexp.Compile(args[0].Text())
+				if err != nil {
+					return sqlite.Value{}, fmt.Errorf("regexp: %w", err)
+				}
+				// Store the auxiliary data for future calls.
+				ctx.SetAuxData(0, re)
+			}
+
+			found := 0
+			if re.MatchString(args[1].Text()) {
+				found = 1
+			}
+			return sqlite.IntegerValue(int64(found)), nil
+		},
+	})
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open database: %v", err)
+	}
+	if err := sqlitemigration.Migrate(ctx, conn, loadSchema()); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open database: %v", err)
+	}
+	return conn, nil
+}
+
+//go:embed dbschema/*.sql
+var schemaFiles embed.FS
+
+func loadSchema() sqlitemigration.Schema {
+	schema := sqlitemigration.Schema{AppID: 0x604662be}
+	for i := 1; ; i++ {
+		migration, err := schemaFiles.ReadFile(fmt.Sprintf("dbschema/%02d.sql", i))
+		if errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			panic(err)
+		}
+		schema.Migrations = append(schema.Migrations, string(migration))
+	}
+	return schema
+}
+
+func verifyBiomeExists(conn *sqlite.Conn, id string) error {
+	found := false
+	const query = `select exists(select 1 from "biomes" where "id" = ?);`
+	err := sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
+		found = stmt.ColumnInt(0) != 0
+		return nil
+	}, id)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no biome with ID %q", id)
+	}
+	return nil
+}
+
+func findBiomeDir(id string) (string, error) {
+	if len(id) <= 2 {
+		return "", fmt.Errorf("locate biome directory: id %q too short", id)
+	}
+	cacheDir := xdgdir.Cache.Path()
+	if cacheDir == "" {
+		return "", fmt.Errorf("locate biome directory: %v not defined", xdgdir.Cache)
+	}
+	bdir, err := filepath.Abs(filepath.Join(cacheDir, cacheSubdirName, "biomes", id[:2], id[2:]))
+	if err != nil {
+		return "", fmt.Errorf("locate biome directory: %v", err)
+	}
+	return bdir, nil
+}
+
+func readBiomeEnvironment(conn *sqlite.Conn, id string) (e biome.Environment, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("read biome %q environment: %w", id, err)
+		}
+	}()
+	defer sqlitex.Save(conn)(&err)
+
+	const varQuery = `select "name", "value" from "env_vars" where "biome_id" = ?;`
+	e = biome.Environment{}
+	err = sqlitex.ExecTransient(conn, varQuery, func(stmt *sqlite.Stmt) error {
+		if e.Vars == nil {
+			e.Vars = make(map[string]string)
+		}
+		e.Vars[stmt.ColumnText(0)] = stmt.ColumnText(1)
+		return nil
+	}, id)
+	if err != nil {
+		return biome.Environment{}, err
+	}
+
+	pathPartsQuery := conn.Prep(`select "directory" from "path_parts" ` +
+		`where "biome_id" = :biome_id and "position" = :position ` +
+		`order by "index" asc;`)
+	pathPartsQuery.SetText(":biome_id", id)
+	pathPartsQuery.SetText(":position", "prepend")
+	for {
+		hasRow, err := pathPartsQuery.Step()
+		if err != nil {
+			return biome.Environment{}, err
+		}
+		if !hasRow {
+			break
+		}
+		e.PrependPath = append(e.PrependPath, pathPartsQuery.ColumnText(0))
+	}
+	if err := pathPartsQuery.Reset(); err != nil {
+		return biome.Environment{}, err
+	}
+
+	pathPartsQuery.SetText(":position", "append")
+	for {
+		hasRow, err := pathPartsQuery.Step()
+		if err != nil {
+			return biome.Environment{}, err
+		}
+		if !hasRow {
+			break
+		}
+		e.AppendPath = append(e.AppendPath, pathPartsQuery.ColumnText(0))
+	}
+	if err := pathPartsQuery.Reset(); err != nil {
+		return biome.Environment{}, err
+	}
+
+	return e, nil
+}
+
+func writeBiomeEnvironment(conn *sqlite.Conn, id string, e biome.Environment) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("write biome %q environment: %w", id, err)
+		}
+	}()
+	defer sqlitex.Save(conn)(&err)
+
+	err = sqlitex.ExecTransient(conn, `delete from "env_vars" where "biome_id" = ?;`, nil, id)
+	if err != nil {
+		return err
+	}
+	err = sqlitex.ExecTransient(conn, `delete from "path_parts" where "biome_id" = ?;`, nil, id)
+	if err != nil {
+		return err
+	}
+
+	insertVarStmt := conn.Prep(`insert into "env_vars" ("biome_id", "name", "value") values (?, ?, ?);`)
+	insertVarStmt.BindText(1, id)
+	for k, v := range e.Vars {
+		insertVarStmt.BindText(2, k)
+		insertVarStmt.BindText(3, v)
+		if _, err := insertVarStmt.Step(); err != nil {
+			return fmt.Errorf("set %s: %w", k, err)
+		}
+		if err := insertVarStmt.Reset(); err != nil {
+			return fmt.Errorf("set %s: %w", k, err)
+		}
+	}
+
+	insertPathPartStmt := conn.Prep(`insert into "path_parts" ("biome_id", "position", "index", "directory") values (?, ?, ?, ?);`)
+	insertPathParts := func(parts []string) error {
+		for i, dir := range parts {
+			insertPathPartStmt.BindInt64(3, int64(i))
+			insertPathPartStmt.BindText(4, dir)
+			if _, err := insertPathPartStmt.Step(); err != nil {
+				return err
+			}
+			if err := insertPathPartStmt.Reset(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	insertPathPartStmt.BindText(1, id)
+	insertPathPartStmt.BindText(2, "prepend")
+	if err := insertPathParts(e.PrependPath); err != nil {
+		return err
+	}
+	insertPathPartStmt.BindText(3, "append")
+	if err := insertPathParts(e.AppendPath); err != nil {
+		return err
+	}
+
+	return nil
 }
