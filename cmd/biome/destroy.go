@@ -30,25 +30,26 @@ import (
 )
 
 type destroyCommand struct {
-	id string
+	biomeID string
 }
 
 func newDestroyCommand() *cobra.Command {
 	c := new(destroyCommand)
 	cmd := &cobra.Command{
-		Use:                   "destroy [options] [ID]",
+		Use:                   "destroy [options] [--biome=ID]",
 		DisableFlagsInUseLine: true,
 		Short:                 "destroy a biome",
-		Args:                  cobra.MaximumNArgs(1),
+		Args:                  cobra.NoArgs,
 		SilenceErrors:         true,
 		SilenceUsage:          true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				c.id = args[0]
+				c.biomeID = args[0]
 			}
 			return c.run(cmd.Context())
 		},
 	}
+	cmd.Flags().StringVarP(&c.biomeID, "biome", "b", "", "biome to run inside")
 	return cmd
 }
 
@@ -60,7 +61,7 @@ func (c *destroyCommand) run(ctx context.Context) (err error) {
 	defer db.Close()
 
 	defer sqlitex.Save(db)(&err)
-	id, _, err := findBiome(db, c.id)
+	id, _, err := findBiome(db, c.biomeID)
 	if err != nil {
 		return fmt.Errorf("destroy %q: %v", id, err)
 	}

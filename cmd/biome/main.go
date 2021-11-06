@@ -201,7 +201,7 @@ func findBiome(conn *sqlite.Conn, arg string) (id string, rootHostDir string, er
 			return "", "", fmt.Errorf("no biomes in %s", currDir)
 		}
 		if n > 1 {
-			return "", "", fmt.Errorf("multiple biomes in %s", currDir)
+			return "", "", fmt.Errorf("multiple biomes in %s; use --biome=ID to disambiguate", currDir)
 		}
 		return id, rootHostDir, nil
 	}
