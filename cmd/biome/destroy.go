@@ -22,9 +22,9 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -100,7 +100,7 @@ func removeAll(ctx context.Context, path string) error {
 	// Otherwise, is this a directory we need to recurse into?
 	dir, serr := os.Lstat(path)
 	if serr != nil {
-		if serr, ok := serr.(*os.PathError); ok && (os.IsNotExist(serr.Err) || serr.Err == syscall.ENOTDIR) {
+		if serr, ok := serr.(*os.PathError); ok && (os.IsNotExist(serr.Err) || serr.Err == unix.ENOTDIR) {
 			return nil
 		}
 		return serr
