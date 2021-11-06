@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -30,26 +31,31 @@ import (
 )
 
 type createCommand struct {
+	rootDir string
 }
 
 func newCreateCommand() *cobra.Command {
 	c := new(createCommand)
 	cmd := &cobra.Command{
-		Use:                   "create [options]",
-		DisableFlagsInUseLine: true,
-		Short:                 "create a new biome",
-		Args:                  cobra.NoArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
+		Use:           "create",
+		Short:         "create a new biome",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return c.run(cmd.Context())
 		},
 	}
+	cmd.Flags().StringVar(&c.rootDir, "root", ".", "root of the directory to copy into the biome")
 	return cmd
 }
 
 func (c *createCommand) run(ctx context.Context) (err error) {
 	now := time.Now()
+	rootDir, err := filepath.Abs(c.rootDir)
+	if err != nil {
+		return err
+	}
 	db, err := openDB(ctx)
 	if err != nil {
 		return err
@@ -61,11 +67,12 @@ func (c *createCommand) run(ctx context.Context) (err error) {
 		return err
 	}
 	defer sqlitex.Save(db)(&err)
-	err = sqlitex.Exec(db, `insert into "biomes" ("id", "created_at") values (?, ?);`, nil, id, now.UTC().Format(sqliteTimestampFormatMillis))
+	err = sqlitex.Exec(db, `insert into "biomes" ("id", "created_at", "root_host_dir") values (?, ?, ?);`, nil,
+		id, now.UTC().Format(sqliteTimestampFormatMillis), rootDir)
 	if err != nil {
 		return err
 	}
-	if dir, err := findBiomeDir(id); err != nil {
+	if dir, err := computeBiomeRoot(id); err != nil {
 		log.Warnf(ctx, "%v", err)
 	} else if err := os.MkdirAll(dir, 0o744); err != nil {
 		log.Warnf(ctx, "%v", err)

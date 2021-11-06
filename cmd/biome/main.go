@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -133,6 +134,26 @@ func openDB(ctx context.Context) (*sqlite.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("open database: %v", err)
 	}
+	err = conn.CreateFunction("pathparentof", &sqlite.FunctionImpl{
+		NArgs:         2,
+		Deterministic: true,
+		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
+			if args[0].Type() == sqlite.TypeNull || args[1].Type() == sqlite.TypeNull {
+				return sqlite.Value{}, nil
+			}
+			parent := filepath.Clean(args[0].Text())
+			child := filepath.Clean(args[1].Text())
+			if parent == child || strings.HasPrefix(child, parent+string(filepath.Separator)) {
+				return sqlite.IntegerValue(1), nil
+			} else {
+				return sqlite.IntegerValue(0), nil
+			}
+		},
+	})
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open database: %v", err)
+	}
 	if err := sqlitemigration.Migrate(ctx, conn, loadSchema()); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("open database: %v", err)
@@ -158,23 +179,53 @@ func loadSchema() sqlitemigration.Schema {
 	return schema
 }
 
-func verifyBiomeExists(conn *sqlite.Conn, id string) error {
+// findBiome converts an ID reference or the empty string into a full biome ID.
+func findBiome(conn *sqlite.Conn, arg string) (id string, rootHostDir string, err error) {
+	if arg == "" {
+		currDir, err := os.Getwd()
+		if err != nil {
+			return "", "", err
+		}
+		const query = `select "id", "root_host_dir" from "biomes" where pathparentof("root_host_dir", ?) limit 2;`
+		n := 0
+		err = sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
+			n++
+			id = stmt.ColumnText(0)
+			rootHostDir = stmt.ColumnText(1)
+			return nil
+		}, currDir)
+		if err != nil {
+			return "", "", err
+		}
+		if n == 0 {
+			return "", "", fmt.Errorf("no biomes in %s", currDir)
+		}
+		if n > 1 {
+			return "", "", fmt.Errorf("multiple biomes in %s", currDir)
+		}
+		return id, rootHostDir, nil
+	}
+	// TODO(soon): Allow prefix of ID.
 	found := false
-	const query = `select exists(select 1 from "biomes" where "id" = ?);`
-	err := sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
-		found = stmt.ColumnInt(0) != 0
+	const query = `select "id", "root_host_dir" from "biomes" where "id" = ?;`
+	err = sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
+		found = true
+		id = arg
+		rootHostDir = stmt.ColumnText(1)
 		return nil
-	}, id)
+	}, arg)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	if !found {
-		return fmt.Errorf("no biome with ID %q", id)
+		return "", "", fmt.Errorf("no biome with ID %q", arg)
 	}
-	return nil
+	return id, rootHostDir, nil
 }
 
-func findBiomeDir(id string) (string, error) {
+// computeBiomeRoot returns the cache directory that contains the biome's
+// supporting files.
+func computeBiomeRoot(id string) (string, error) {
 	if len(id) <= 2 {
 		return "", fmt.Errorf("locate biome directory: id %q too short", id)
 	}
@@ -187,6 +238,14 @@ func findBiomeDir(id string) (string, error) {
 		return "", fmt.Errorf("locate biome directory: %v", err)
 	}
 	return bdir, nil
+}
+
+func setupBiome(biomeRoot string, rootHostDir string) biome.Local {
+	return biome.Local{
+		HomeDir: filepath.Join(biomeRoot, "home"),
+		// TODO(soon): Don't use rootHostDir directly. Copy them over to biomeRoot/work
+		WorkDir: rootHostDir,
+	}
 }
 
 func readBiomeEnvironment(conn *sqlite.Conn, id string) (e biome.Environment, err error) {

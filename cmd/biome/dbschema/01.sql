@@ -6,13 +6,18 @@ create table "biomes" (
   "created_at" timestamp
     not null
     default current_timestamp
-    check ("created_at" regexp '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-2][0-9]:[0-5][0-9]:[0-5][0-9](\.[0-9]*)?')
+    check ("created_at" regexp '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-2][0-9]:[0-5][0-9]:[0-5][0-9](\.[0-9]*)?'),
+  "root_host_dir" text
+    not null
+    check ("root_host_dir" <> '')
 );
 
 create table "env_vars" (
   "biome_id" text
     not null
-    references "biomes",
+    references "biomes"
+      on update cascade
+      on delete cascade,
   "name" text
     not null
     check ("name" regexp '[^=]+'),
@@ -26,7 +31,9 @@ create table "env_vars" (
 create table "path_parts" (
   "biome_id" text
     not null
-    references "biomes",
+    references "biomes"
+      on update cascade
+      on delete cascade,
   "position" text
     not null
     default 'prepend'

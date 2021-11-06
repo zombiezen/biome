@@ -43,10 +43,10 @@ type installCommand struct {
 func newInstallCommand() *cobra.Command {
 	c := new(installCommand)
 	cmd := &cobra.Command{
-		Use:                   "install [options] --biome=ID SCRIPT VERSION",
+		Use:                   "install [options] SCRIPT VERSION",
+		DisableFlagsInUseLine: true,
 		Short:                 "run an installer script",
 		Args:                  cobra.ExactArgs(2),
-		DisableFlagsInUseLine: true,
 		SilenceErrors:         true,
 		SilenceUsage:          true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -60,32 +60,26 @@ func newInstallCommand() *cobra.Command {
 }
 
 func (c *installCommand) run(ctx context.Context) (err error) {
-	if c.biomeID == "" {
-		return fmt.Errorf("missing --biome option")
-	}
 	db, err := openDB(ctx)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	defer sqlitex.Save(db)(&err)
-	if err := verifyBiomeExists(db, c.biomeID); err != nil {
+	biomeID, rootHostDir, err := findBiome(db, c.biomeID)
+	if err != nil {
 		return err
 	}
-	env, err := readBiomeEnvironment(db, c.biomeID)
+	env, err := readBiomeEnvironment(db, biomeID)
 	if err != nil {
 		return err
 	}
 
-	bio := biome.Local{}
-	bio.HomeDir, err = findBiomeDir(c.biomeID)
+	biomeRoot, err := computeBiomeRoot(biomeID)
 	if err != nil {
 		return err
 	}
-	bio.WorkDir, err = os.Getwd()
-	if err != nil {
-		return err
-	}
+	bio := setupBiome(biomeRoot, rootHostDir)
 	thread := &starlark.Thread{}
 	thread.SetLocal(threadContextKey, ctx)
 	script, err := os.Open(c.script)
@@ -138,7 +132,7 @@ func (c *installCommand) run(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("install return value: %w", err)
 	}
-	if err := writeBiomeEnvironment(db, c.biomeID, env.Merge(installEnv)); err != nil {
+	if err := writeBiomeEnvironment(db, biomeID, env.Merge(installEnv)); err != nil {
 		return err
 	}
 	return nil

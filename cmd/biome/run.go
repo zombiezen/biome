@@ -18,8 +18,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -51,9 +52,8 @@ func newRunCommand() *cobra.Command {
 }
 
 func (c *runCommand) run(ctx context.Context) error {
-	if c.biomeID == "" {
-		return fmt.Errorf("missing --biome option")
-	}
+	var biomeID string
+	var rootHostDir string
 	var env biome.Environment
 	err := func() (err error) {
 		db, err := openDB(ctx)
@@ -62,10 +62,11 @@ func (c *runCommand) run(ctx context.Context) error {
 		}
 		defer db.Close()
 		defer sqlitex.Save(db)(&err)
-		if err := verifyBiomeExists(db, c.biomeID); err != nil {
+		biomeID, rootHostDir, err = findBiome(db, c.biomeID)
+		if err != nil {
 			return err
 		}
-		env, err = readBiomeEnvironment(db, c.biomeID)
+		env, err = readBiomeEnvironment(db, biomeID)
 		if err != nil {
 			return err
 		}
@@ -75,14 +76,21 @@ func (c *runCommand) run(ctx context.Context) error {
 		return err
 	}
 
-	bio := biome.Local{}
-	bio.HomeDir, err = findBiomeDir(c.biomeID)
+	biomeRoot, err := computeBiomeRoot(biomeID)
 	if err != nil {
 		return err
 	}
-	bio.WorkDir, err = os.Getwd()
+	bio := setupBiome(biomeRoot, rootHostDir)
+	currDir, err := os.Getwd()
 	if err != nil {
 		return err
+	}
+	relDir, err := filepath.Rel(rootHostDir, currDir)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(relDir, ".."+string(filepath.Separator)) {
+		relDir = ""
 	}
 
 	// TODO(soon): Exit with same exit code.
@@ -91,6 +99,7 @@ func (c *runCommand) run(ctx context.Context) error {
 		Env:   env,
 	}.Run(ctx, &biome.Invocation{
 		Argv:        c.argv,
+		Dir:         relDir,
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,

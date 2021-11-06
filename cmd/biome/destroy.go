@@ -33,14 +33,16 @@ type destroyCommand struct {
 func newDestroyCommand() *cobra.Command {
 	c := new(destroyCommand)
 	cmd := &cobra.Command{
-		Use:                   "destroy [options] ID",
+		Use:                   "destroy [options] [ID]",
 		DisableFlagsInUseLine: true,
 		Short:                 "destroy a biome",
-		Args:                  cobra.ExactArgs(1),
+		Args:                  cobra.MaximumNArgs(1),
 		SilenceErrors:         true,
 		SilenceUsage:          true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c.id = args[0]
+			if len(args) > 0 {
+				c.id = args[0]
+			}
 			return c.run(cmd.Context())
 		},
 	}
@@ -55,16 +57,17 @@ func (c *destroyCommand) run(ctx context.Context) (err error) {
 	defer db.Close()
 
 	defer sqlitex.Save(db)(&err)
-	if err := verifyBiomeExists(db, c.id); err != nil {
-		return fmt.Errorf("destroy %q: %v", c.id, err)
-	}
-	err = sqlitex.Exec(db, `delete from "biomes" where "id" = ?;`, nil, c.id)
+	id, _, err := findBiome(db, c.id)
 	if err != nil {
-		return fmt.Errorf("destroy %q: %v", c.id, err)
+		return fmt.Errorf("destroy %q: %v", id, err)
+	}
+	err = sqlitex.Exec(db, `delete from "biomes" where "id" = ?;`, nil, id)
+	if err != nil {
+		return fmt.Errorf("destroy %q: %v", id, err)
 	}
 
 	// TODO(soon): Delete write-protected files.
-	if dir, err := findBiomeDir(c.id); err != nil {
+	if dir, err := computeBiomeRoot(id); err != nil {
 		log.Warnf(ctx, "Cleaning up biome: %v", err)
 	} else if err := os.RemoveAll(dir); err != nil {
 		log.Warnf(ctx, "Cleaning up biome: %v", err)
