@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go4.org/xdgdir"
@@ -100,6 +101,7 @@ func openDB(ctx context.Context) (*sqlite.Conn, error) {
 		return nil, fmt.Errorf("open database: %v", err)
 	}
 	conn.SetInterrupt(ctx.Done())
+	conn.SetBusyTimeout(60 * time.Second) // TODO(someday): Block until interrupt.
 	if err := sqlitex.ExecTransient(conn, "PRAGMA foreign_keys = on;", nil); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("open database: %v", err)
@@ -179,53 +181,86 @@ func loadSchema() sqlitemigration.Schema {
 	return schema
 }
 
-// findBiome converts an ID reference or the empty string into a full biome ID.
-func findBiome(conn *sqlite.Conn, arg string) (id string, rootHostDir string, err error) {
+type biomeRecord struct {
+	id          string
+	rootHostDir string
+	supportRoot string
+}
+
+// findBiome fetches the biome record for an ID reference or the empty string.
+func findBiome(conn *sqlite.Conn, arg string) (*biomeRecord, error) {
 	if arg == "" {
 		currDir, err := os.Getwd()
 		if err != nil {
-			return "", "", err
+			return nil, err
 		}
 		const query = `select "id", "root_host_dir" from "biomes" where pathparentof("root_host_dir", ?) limit 2;`
 		n := 0
+		rec := new(biomeRecord)
 		err = sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
 			n++
-			id = stmt.ColumnText(0)
-			rootHostDir = stmt.ColumnText(1)
+			rec.id = stmt.ColumnText(0)
+			rec.rootHostDir = stmt.ColumnText(1)
 			return nil
 		}, currDir)
 		if err != nil {
-			return "", "", err
+			return nil, err
 		}
 		if n == 0 {
-			return "", "", fmt.Errorf("no biomes in %s", currDir)
+			return nil, fmt.Errorf("no biomes in %s", currDir)
 		}
 		if n > 1 {
-			return "", "", fmt.Errorf("multiple biomes in %s; use --biome=ID to disambiguate", currDir)
+			return nil, fmt.Errorf("multiple biomes in %s; use --biome=ID to disambiguate", currDir)
 		}
-		return id, rootHostDir, nil
+		rec.supportRoot, err = computeSupportRoot(rec.id)
+		if err != nil {
+			return nil, err
+		}
+		return rec, nil
 	}
 	// TODO(soon): Allow prefix of ID.
-	found := false
-	const query = `select "id", "root_host_dir" from "biomes" where "id" = ?;`
-	err = sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
-		found = true
-		id = arg
-		rootHostDir = stmt.ColumnText(1)
+	const query = `select "id", "root_host_dir" from "biomes" where "id" = ? limit 1;`
+	var rec *biomeRecord
+	err := sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
+		rec = &biomeRecord{
+			id:          stmt.ColumnText(0),
+			rootHostDir: stmt.ColumnText(1),
+		}
 		return nil
 	}, arg)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	if !found {
-		return "", "", fmt.Errorf("no biome with ID %q", arg)
+	if rec == nil {
+		return nil, fmt.Errorf("no biome with ID %q", arg)
 	}
-	return id, rootHostDir, nil
+	rec.supportRoot, err = computeSupportRoot(rec.id)
+	if err != nil {
+		return nil, err
+	}
+	return rec, nil
 }
 
-// computeBiomeRoot returns the cache directory that contains the biome's
+func (rec *biomeRecord) setup(ctx context.Context, conn *sqlite.Conn) (biome.Biome, error) {
+	bio := biome.Local{
+		HomeDir: filepath.Join(rec.supportRoot, "home"),
+		WorkDir: filepath.Join(rec.supportRoot, "work"),
+	}
+	if err := os.MkdirAll(bio.HomeDir, 0o744); err != nil {
+		return nil, fmt.Errorf("open biome %s: %v", rec.id, err)
+	}
+	if err := os.MkdirAll(bio.WorkDir, 0o744); err != nil {
+		return nil, fmt.Errorf("open biome %s: %v", rec.id, err)
+	}
+	if err := pushWorkDir(ctx, conn, rec, bio); err != nil {
+		return nil, err
+	}
+	return bio, nil
+}
+
+// computeSupportRoot returns the cache directory that contains the biome's
 // supporting files.
-func computeBiomeRoot(id string) (string, error) {
+func computeSupportRoot(id string) (string, error) {
 	if len(id) <= 2 {
 		return "", fmt.Errorf("locate biome directory: id %q too short", id)
 	}
@@ -238,14 +273,6 @@ func computeBiomeRoot(id string) (string, error) {
 		return "", fmt.Errorf("locate biome directory: %v", err)
 	}
 	return bdir, nil
-}
-
-func setupBiome(biomeRoot string, rootHostDir string) biome.Local {
-	return biome.Local{
-		HomeDir: filepath.Join(biomeRoot, "home"),
-		// TODO(soon): Don't use rootHostDir directly. Copy them over to biomeRoot/work
-		WorkDir: rootHostDir,
-	}
 }
 
 func readBiomeEnvironment(conn *sqlite.Conn, id string) (e biome.Environment, err error) {

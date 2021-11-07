@@ -65,21 +65,23 @@ func (c *installCommand) run(ctx context.Context) (err error) {
 		return err
 	}
 	defer db.Close()
-	defer sqlitex.Save(db)(&err)
-	biomeID, rootHostDir, err := findBiome(db, c.biomeID)
+	endFn, err := sqlitex.ImmediateTransaction(db)
 	if err != nil {
 		return err
 	}
-	env, err := readBiomeEnvironment(db, biomeID)
+	defer endFn(&err)
+	rec, err := findBiome(db, c.biomeID)
 	if err != nil {
 		return err
 	}
-
-	biomeRoot, err := computeBiomeRoot(biomeID)
+	env, err := readBiomeEnvironment(db, rec.id)
 	if err != nil {
 		return err
 	}
-	bio := setupBiome(biomeRoot, rootHostDir)
+	bio, err := rec.setup(ctx, db)
+	if err != nil {
+		return err
+	}
 	thread := &starlark.Thread{}
 	thread.SetLocal(threadContextKey, ctx)
 	script, err := os.Open(c.script)
@@ -132,7 +134,7 @@ func (c *installCommand) run(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("install return value: %w", err)
 	}
-	if err := writeBiomeEnvironment(db, biomeID, env.Merge(installEnv)); err != nil {
+	if err := writeBiomeEnvironment(db, rec.id, env.Merge(installEnv)); err != nil {
 		return err
 	}
 	return nil

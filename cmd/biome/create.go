@@ -21,12 +21,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
-	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
@@ -66,16 +64,27 @@ func (c *createCommand) run(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	defer sqlitex.Save(db)(&err)
+
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
 	err = sqlitex.Exec(db, `insert into "biomes" ("id", "created_at", "root_host_dir") values (?, ?, ?);`, nil,
 		id, now.UTC().Format(sqliteTimestampFormatMillis), rootDir)
 	if err != nil {
 		return err
 	}
-	if dir, err := computeBiomeRoot(id); err != nil {
-		log.Warnf(ctx, "%v", err)
-	} else if err := os.MkdirAll(dir, 0o744); err != nil {
-		log.Warnf(ctx, "%v", err)
+	rec := &biomeRecord{
+		id:          id,
+		rootHostDir: rootDir,
+	}
+	rec.supportRoot, err = computeSupportRoot(id)
+	if err != nil {
+		return err
+	}
+	if _, err := rec.setup(ctx, db); err != nil {
+		return err
 	}
 	fmt.Println(id)
 	return nil

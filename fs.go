@@ -48,6 +48,17 @@ func AbsPath(bio Biome, path string) string {
 	return bio.JoinPath(bio.Dirs().Work, path)
 }
 
+// FromSlash returns the result of replacing each slash ('/') character in path
+// with a separator character. Multiple slashes are replaced by multiple separators.
+func FromSlash(desc *Descriptor, path string) string {
+	switch desc.OS {
+	case Windows:
+		return strings.ReplaceAll(path, "/", `\`)
+	default:
+		return path
+	}
+}
+
 type fileWriter interface {
 	WriteFile(ctx context.Context, path string, src io.Reader) error
 }

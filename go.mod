@@ -11,7 +11,7 @@ require (
 	golang.org/x/sys v0.0.0-20211102192858-4dd72447c267
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	zombiezen.com/go/log v1.0.3
-	zombiezen.com/go/sqlite v0.7.2
+	zombiezen.com/go/sqlite v0.8.0
 )
 
 require (

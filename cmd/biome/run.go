@@ -52,8 +52,8 @@ func newRunCommand() *cobra.Command {
 }
 
 func (c *runCommand) run(ctx context.Context) error {
-	var biomeID string
-	var rootHostDir string
+	var rec *biomeRecord
+	var bio biome.Biome
 	var env biome.Environment
 	err := func() (err error) {
 		db, err := openDB(ctx)
@@ -61,12 +61,20 @@ func (c *runCommand) run(ctx context.Context) error {
 			return err
 		}
 		defer db.Close()
-		defer sqlitex.Save(db)(&err)
-		biomeID, rootHostDir, err = findBiome(db, c.biomeID)
+		endFn, err := sqlitex.ImmediateTransaction(db)
 		if err != nil {
 			return err
 		}
-		env, err = readBiomeEnvironment(db, biomeID)
+		defer endFn(&err)
+		rec, err = findBiome(db, c.biomeID)
+		if err != nil {
+			return err
+		}
+		env, err = readBiomeEnvironment(db, rec.id)
+		if err != nil {
+			return err
+		}
+		bio, err = rec.setup(ctx, db)
 		if err != nil {
 			return err
 		}
@@ -76,16 +84,11 @@ func (c *runCommand) run(ctx context.Context) error {
 		return err
 	}
 
-	biomeRoot, err := computeBiomeRoot(biomeID)
-	if err != nil {
-		return err
-	}
-	bio := setupBiome(biomeRoot, rootHostDir)
 	currDir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	relDir, err := filepath.Rel(rootHostDir, currDir)
+	relDir, err := filepath.Rel(rec.rootHostDir, currDir)
 	if err != nil {
 		return err
 	}

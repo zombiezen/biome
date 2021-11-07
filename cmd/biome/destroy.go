@@ -60,19 +60,21 @@ func (c *destroyCommand) run(ctx context.Context) (err error) {
 	}
 	defer db.Close()
 
-	defer sqlitex.Save(db)(&err)
-	id, _, err := findBiome(db, c.biomeID)
+	endFn, err := sqlitex.ImmediateTransaction(db)
 	if err != nil {
-		return fmt.Errorf("destroy %q: %v", id, err)
+		return fmt.Errorf("destroy: %v", err)
 	}
-	err = sqlitex.Exec(db, `delete from "biomes" where "id" = ?;`, nil, id)
+	defer endFn(&err)
+	rec, err := findBiome(db, c.biomeID)
 	if err != nil {
-		return fmt.Errorf("destroy %q: %v", id, err)
+		return fmt.Errorf("destroy %q: %v", rec.id, err)
+	}
+	err = sqlitex.Exec(db, `delete from "biomes" where "id" = ?;`, nil, rec.id)
+	if err != nil {
+		return fmt.Errorf("destroy %q: %v", rec.id, err)
 	}
 
-	if dir, err := computeBiomeRoot(id); err != nil {
-		log.Warnf(ctx, "Cleaning up biome: %v", err)
-	} else if err := removeAll(ctx, dir); err != nil {
+	if err := removeAll(ctx, rec.supportRoot); err != nil {
 		return err
 	}
 	return nil
