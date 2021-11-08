@@ -45,6 +45,10 @@ var (
 		dirMaker
 		symlinkEvaler
 	} = ExecPrefix{}
+
+	_ interface {
+		BiomeCloser
+	} = (*Fake)(nil)
 )
 
 func TestLocal(t *testing.T) {
@@ -261,7 +265,10 @@ func TestExecPrefix(t *testing.T) {
 			var got []string
 			bio := ExecPrefix{
 				Biome: &Fake{
-					Separator: '/',
+					Descriptor: Descriptor{
+						OS:   Linux,
+						Arch: Intel64,
+					},
 					RunFunc: func(_ context.Context, invoke *Invocation) error {
 						got = append([]string(nil), invoke.Argv...)
 						return nil

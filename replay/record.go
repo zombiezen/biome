@@ -53,7 +53,6 @@ func NewRecorder(dir string, bio biome.Biome) *Recorder {
 		data: &replayData{
 			Descriptor: bio.Describe(),
 			Dirs:       bio.Dirs(),
-			AbsPaths:   make(map[string]bool),
 		},
 	}
 }
@@ -177,25 +176,6 @@ func saveInvocation(invoke *biome.Invocation, sinks ioSinks, err error) *invocat
 		recorded.Error = err.Error()
 	}
 	return recorded
-}
-
-func (rec *Recorder) JoinPath(elem ...string) string {
-	got := rec.biome.JoinPath(elem...)
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	rec.data.JoinedPaths = append(rec.data.JoinedPaths, &joinPathLookup{
-		Elems:  append([]string(nil), elem...),
-		Result: got,
-	})
-	return got
-}
-
-func (rec *Recorder) IsAbsPath(path string) bool {
-	got := rec.biome.IsAbsPath(path)
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	rec.data.AbsPaths[path] = got
-	return got
 }
 
 func ensureBytesNotNil(b []byte) []byte {

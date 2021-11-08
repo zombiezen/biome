@@ -102,7 +102,7 @@ func TestExtract(t *testing.T) {
 			output := new(strings.Builder)
 			opts := &Options{
 				URL:            srv.URL + wantPath,
-				DestinationDir: bio.JoinPath(bio.HomeDir, "extractpoint"),
+				DestinationDir: biome.JoinPath(bio.Describe(), bio.HomeDir, "extractpoint"),
 				Biome:          bio,
 				Output:         output,
 				Downloader:     downloader.New(t.TempDir()),
@@ -114,7 +114,7 @@ func TestExtract(t *testing.T) {
 				t.Error("extract:", err)
 			}
 
-			outPath := bio.JoinPath(opts.DestinationDir, "foo", "bar.txt")
+			outPath := biome.JoinPath(bio.Describe(), opts.DestinationDir, "foo", "bar.txt")
 			got, err := ioutil.ReadFile(outPath)
 			if err != nil {
 				t.Fatal(err)

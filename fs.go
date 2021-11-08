@@ -27,38 +27,6 @@ import (
 // This file holds functions that can be derived from any implementation of the
 // base biome interface, but may potentially have a more optimal implementation.
 
-// CleanPath returns the shortest path name equivalent to path by purely
-// lexical processing. It uses the same algorithm as path/filepath.Clean.
-func CleanPath(bio Biome, path string) string {
-	if path == "" {
-		// JoinPath will return an empty string, which does not match Clean.
-		return "."
-	}
-	return bio.JoinPath(path)
-}
-
-// AbsPath returns an absolute representation of path. If the path is not absolute
-// it will be joined with the biome's working directory to turn it into an absolute
-// path. The absolute path name for a given file is not guaranteed to be unique.
-// AbsPath calls Clean on the result.
-func AbsPath(bio Biome, path string) string {
-	if bio.IsAbsPath(path) {
-		return CleanPath(bio, path)
-	}
-	return bio.JoinPath(bio.Dirs().Work, path)
-}
-
-// FromSlash returns the result of replacing each slash ('/') character in path
-// with a separator character. Multiple slashes are replaced by multiple separators.
-func FromSlash(desc *Descriptor, path string) string {
-	switch desc.OS {
-	case Windows:
-		return strings.ReplaceAll(path, "/", `\`)
-	default:
-		return path
-	}
-}
-
 type fileWriter interface {
 	WriteFile(ctx context.Context, path string, src io.Reader) error
 }
@@ -170,7 +138,7 @@ func EvalSymlinks(ctx context.Context, bio Biome, path string) (string, error) {
 		}
 		return "", fmt.Errorf("eval symlinks for %s: %s", path, strings.TrimSuffix(stderr.String(), "\n"))
 	}
-	return CleanPath(bio, stdout.String()), nil
+	return CleanPath(bio.Describe(), stdout.String()), nil
 }
 
 func forwardEvalSymlinks(ctx context.Context, bio Biome, path string) (string, error) {

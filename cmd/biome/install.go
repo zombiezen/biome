@@ -381,7 +381,7 @@ func newPathModule(bio biome.Biome) *module {
 					}
 					stringArgs = append(stringArgs, arg)
 				}
-				return starlark.String(bio.JoinPath(stringArgs...)), nil
+				return starlark.String(biome.JoinPath(bio.Describe(), stringArgs...)), nil
 			}),
 			"exists": starlark.NewBuiltin("path.exists", func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 				var path string

@@ -38,7 +38,7 @@ import (
 // https://golang.org/issue/41198 is resolved.
 var ErrUnsupported = errors.New("unsupported operation")
 
-// A Biome is an environment that a target is built or run in.
+// A Biome is an environment that programs can be run in.
 // Implementations must be safe to use from multiple goroutines.
 type Biome interface {
 	// Describe returns information about the execution environment.
@@ -53,18 +53,6 @@ type Biome interface {
 	// it to complete. Run must not modify any fields in the Invocation or
 	// retain them after Run returns.
 	Run(ctx context.Context, invoke *Invocation) error
-
-	// The following methods are analogous to the ones in the
-	// path/filepath package, but operate on the biome's filesystem paths.
-
-	// JoinPath joins any number of path elements into a single path.
-	// The result is cleaned as if by path/filepath.Clean, however, if the
-	// argument list is empty or all its elements are empty, JoinPath
-	// returns an empty string.
-	JoinPath(elem ...string) string
-
-	// IsAbsPath reports whether the path is absolute.
-	IsAbsPath(path string) bool
 }
 
 // A Descriptor describes various facets of a biome.
@@ -243,16 +231,6 @@ func (l Local) lookPath(env Environment, dir string, program string) (string, er
 		}
 	}
 	return "", &exec.Error{Name: program, Err: exec.ErrNotFound}
-}
-
-// JoinPath calls filepath.Join.
-func (l Local) JoinPath(elem ...string) string {
-	return filepath.Join(elem...)
-}
-
-// IsAbsPath calls filepath.IsAbs.
-func (l Local) IsAbsPath(path string) bool {
-	return filepath.IsAbs(path)
 }
 
 // WriteFile writes the data from src to the gven path with the mode 0666.

@@ -42,8 +42,6 @@ import (
 type replayData struct {
 	Descriptor  *biome.Descriptor
 	Dirs        *biome.Dirs
-	JoinedPaths []*joinPathLookup
-	AbsPaths    map[string]bool
 	Invocations []*invocation
 }
 
@@ -258,26 +256,6 @@ func (r *Replay) Run(ctx context.Context, invoke *biome.Invocation) error {
 		return errors.New(recorded.Error)
 	}
 	return nil
-}
-
-func (r *Replay) JoinPath(elem ...string) string {
-	if len(elem) == 0 {
-		return ""
-	}
-	for _, possible := range r.data.JoinedPaths {
-		if stringSliceEqual(possible.Elems, elem) {
-			return possible.Result
-		}
-	}
-	return "__UNKNOWN_JOIN_PATH__"
-}
-
-func (r *Replay) IsAbsPath(path string) bool {
-	absPath, ok := r.data.AbsPaths[path]
-	if !ok {
-		return false
-	}
-	return absPath
 }
 
 type hexString []byte

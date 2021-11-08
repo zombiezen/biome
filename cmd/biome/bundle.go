@@ -141,7 +141,7 @@ func pushWorkDir(ctx context.Context, conn *sqlite.Conn, rec *biomeRecord, bio b
 		return err
 	}
 	zipName += ".zip"
-	zipPath := bio.JoinPath(bio.Dirs().Home, zipName)
+	zipPath := biome.JoinPath(bio.Describe(), bio.Dirs().Home, zipName)
 	pr, pw := io.Pipe()
 	writeErrChan := make(chan error)
 	go func() {

@@ -187,7 +187,7 @@ func Extract(ctx context.Context, opts *Options) (err error) {
 
 		mvArgv := []string{"mv"}
 		for _, name := range names {
-			mvArgv = append(mvArgv, opts.Biome.JoinPath(root, name))
+			mvArgv = append(mvArgv, biome.JoinPath(opts.Biome.Describe(), root, name))
 		}
 		mvArgv = append(mvArgv, ".")
 		err = opts.Biome.Run(ctx, &biome.Invocation{
