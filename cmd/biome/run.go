@@ -54,7 +54,6 @@ func newRunCommand() *cobra.Command {
 func (c *runCommand) run(ctx context.Context) error {
 	var rec *biomeRecord
 	var bio biome.Biome
-	var env biome.Environment
 	err := func() (err error) {
 		db, err := openDB(ctx)
 		if err != nil {
@@ -67,10 +66,6 @@ func (c *runCommand) run(ctx context.Context) error {
 		}
 		defer endFn(&err)
 		rec, err = findBiome(db, c.biomeID)
-		if err != nil {
-			return err
-		}
-		env, err = readBiomeEnvironment(db, rec.id)
 		if err != nil {
 			return err
 		}
@@ -97,10 +92,7 @@ func (c *runCommand) run(ctx context.Context) error {
 	}
 
 	// TODO(soon): Exit with same exit code.
-	return biome.EnvBiome{
-		Biome: bio,
-		Env:   env,
-	}.Run(ctx, &biome.Invocation{
+	return bio.Run(ctx, &biome.Invocation{
 		Argv:        c.argv,
 		Dir:         relDir,
 		Stdin:       os.Stdin,

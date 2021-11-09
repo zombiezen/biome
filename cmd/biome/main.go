@@ -57,6 +57,7 @@ func main() {
 	root.AddCommand(
 		newCreateCommand(),
 		newDestroyCommand(),
+		newDownloadCommand(),
 		newInstallCommand(),
 		newListCommand(),
 		newRunCommand(),
@@ -185,10 +186,12 @@ type biomeRecord struct {
 	id          string
 	rootHostDir string
 	supportRoot string
+	env         biome.Environment
 }
 
 // findBiome fetches the biome record for an ID reference or the empty string.
 func findBiome(conn *sqlite.Conn, arg string) (*biomeRecord, error) {
+	var rec *biomeRecord
 	if arg == "" {
 		currDir, err := os.Getwd()
 		if err != nil {
@@ -196,7 +199,7 @@ func findBiome(conn *sqlite.Conn, arg string) (*biomeRecord, error) {
 		}
 		const query = `select "id", "root_host_dir" from "biomes" where pathparentof("root_host_dir", ?) limit 2;`
 		n := 0
-		rec := new(biomeRecord)
+		rec = new(biomeRecord)
 		err = sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
 			n++
 			rec.id = stmt.ColumnText(0)
@@ -212,29 +215,30 @@ func findBiome(conn *sqlite.Conn, arg string) (*biomeRecord, error) {
 		if n > 1 {
 			return nil, fmt.Errorf("multiple biomes in %s; use --biome=ID to disambiguate", currDir)
 		}
-		rec.supportRoot, err = computeSupportRoot(rec.id)
+	} else {
+		// TODO(soon): Allow prefix of ID.
+		const query = `select "id", "root_host_dir" from "biomes" where "id" = ? limit 1;`
+		err := sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
+			rec = &biomeRecord{
+				id:          stmt.ColumnText(0),
+				rootHostDir: stmt.ColumnText(1),
+			}
+			return nil
+		}, arg)
 		if err != nil {
 			return nil, err
 		}
-		return rec, nil
-	}
-	// TODO(soon): Allow prefix of ID.
-	const query = `select "id", "root_host_dir" from "biomes" where "id" = ? limit 1;`
-	var rec *biomeRecord
-	err := sqlitex.Exec(conn, query, func(stmt *sqlite.Stmt) error {
-		rec = &biomeRecord{
-			id:          stmt.ColumnText(0),
-			rootHostDir: stmt.ColumnText(1),
+		if rec == nil {
+			return nil, fmt.Errorf("no biome with ID %q", arg)
 		}
-		return nil
-	}, arg)
+	}
+
+	var err error
+	rec.supportRoot, err = computeSupportRoot(rec.id)
 	if err != nil {
 		return nil, err
 	}
-	if rec == nil {
-		return nil, fmt.Errorf("no biome with ID %q", arg)
-	}
-	rec.supportRoot, err = computeSupportRoot(rec.id)
+	rec.env, err = readBiomeEnvironment(conn, rec.id)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +246,17 @@ func findBiome(conn *sqlite.Conn, arg string) (*biomeRecord, error) {
 }
 
 func (rec *biomeRecord) setup(ctx context.Context, conn *sqlite.Conn) (biome.Biome, error) {
+	bio, err := rec.setupWithoutEnv(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	return biome.EnvBiome{
+		Biome: bio,
+		Env:   rec.env,
+	}, nil
+}
+
+func (rec *biomeRecord) setupWithoutEnv(ctx context.Context, conn *sqlite.Conn) (biome.Biome, error) {
 	bio := biome.Local{
 		HomeDir: filepath.Join(rec.supportRoot, "home"),
 		WorkDir: filepath.Join(rec.supportRoot, "work"),

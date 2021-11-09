@@ -74,11 +74,7 @@ func (c *installCommand) run(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	env, err := readBiomeEnvironment(db, rec.id)
-	if err != nil {
-		return err
-	}
-	bio, err := rec.setup(ctx, db)
+	bio, err := rec.setupWithoutEnv(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -134,7 +130,7 @@ func (c *installCommand) run(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("install return value: %w", err)
 	}
-	if err := writeBiomeEnvironment(db, rec.id, env.Merge(installEnv)); err != nil {
+	if err := writeBiomeEnvironment(db, rec.id, rec.env.Merge(installEnv)); err != nil {
 		return err
 	}
 	return nil
