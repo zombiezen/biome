@@ -47,6 +47,10 @@ func (n nopCloser) Close() error {
 	return nil
 }
 
+func (n nopCloser) OpenFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	return forwardOpenFile(ctx, n.Biome, path)
+}
+
 func (n nopCloser) WriteFile(ctx context.Context, path string, src io.Reader) error {
 	return forwardWriteFile(ctx, n.Biome, path, src)
 }
@@ -88,6 +92,10 @@ func (c closer) Close() error {
 		return funcErr
 	}
 	return biomeErr
+}
+
+func (c closer) OpenFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	return forwardOpenFile(ctx, c.BiomeCloser, path)
 }
 
 func (c closer) WriteFile(ctx context.Context, path string, src io.Reader) error {

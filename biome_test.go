@@ -34,6 +34,7 @@ import (
 var (
 	_ interface {
 		BiomeCloser
+		fileOpener
 		fileWriter
 		dirMaker
 		symlinkEvaler
@@ -41,6 +42,7 @@ var (
 
 	_ interface {
 		BiomeCloser
+		fileOpener
 		fileWriter
 		dirMaker
 		symlinkEvaler

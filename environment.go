@@ -146,6 +146,11 @@ func (eb EnvBiome) Run(ctx context.Context, invoke *Invocation) error {
 	return eb.Biome.Run(ctx, invoke2)
 }
 
+// OpenFile calls eb.Context.OpenFile or returns ErrUnsupported if not present.
+func (eb EnvBiome) OpenFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	return forwardOpenFile(ctx, eb.Biome, path)
+}
+
 // WriteFile calls eb.Context.WriteFile or returns ErrUnsupported if not present.
 func (eb EnvBiome) WriteFile(ctx context.Context, path string, src io.Reader) error {
 	return forwardWriteFile(ctx, eb.Biome, path, src)

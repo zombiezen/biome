@@ -25,6 +25,7 @@ import (
 
 var _ interface {
 	BiomeCloser
+	fileOpener
 	fileWriter
 	dirMaker
 	symlinkEvaler

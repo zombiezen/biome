@@ -233,7 +233,12 @@ func (l Local) lookPath(env Environment, dir string, program string) (string, er
 	return "", &exec.Error{Name: program, Err: exec.ErrNotFound}
 }
 
-// WriteFile writes the data from src to the gven path with the mode 0666.
+// OpenFile opens the named file for reading.
+func (l Local) OpenFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	return os.Open(AbsPath(l, path))
+}
+
+// WriteFile writes the data from src to the given path with the mode 0666.
 func (l Local) WriteFile(ctx context.Context, path string, src io.Reader) error {
 	f, err := os.Create(AbsPath(l, path))
 	if err != nil {
@@ -284,6 +289,11 @@ func (ep ExecPrefix) Run(ctx context.Context, invoke *Invocation) error {
 	invoke2.Argv = append(invoke2.Argv, ep.PrependArgv...)
 	invoke2.Argv = append(invoke2.Argv, invoke.Argv...)
 	return ep.Biome.Run(ctx, invoke2)
+}
+
+// OpenFile calls ep.Context.OpenFile or returns ErrUnsupported if not present.
+func (ep ExecPrefix) OpenFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	return forwardOpenFile(ctx, ep.Biome, path)
 }
 
 // WriteFile calls ep.Context.WriteFile or returns ErrUnsupported if not present.

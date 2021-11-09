@@ -17,6 +17,7 @@
 package biome
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -26,6 +27,86 @@ import (
 
 // This file holds functions that can be derived from any implementation of the
 // base biome interface, but may potentially have a more optimal implementation.
+
+type fileOpener interface {
+	OpenFile(ctx context.Context, path string) (io.ReadCloser, error)
+}
+
+// OpenFile opens a file for reading from the biome. Paths are resolved relative
+// to the biome's working directory.
+//
+// If the biome has a method
+// `OpenFile(ctx context.Context, path string) (io.ReadCloser, error)`,
+// that will be used. If it does not or the method returns ErrUnsupported,
+// OpenFile will Run an appropriate fallback in the biome.
+func OpenFile(ctx context.Context, bio Biome, path string) (io.ReadCloser, error) {
+	if rc, err := forwardOpenFile(ctx, bio, path); !errors.Is(err, ErrUnsupported) {
+		return rc, err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	stderr := new(strings.Builder)
+	pr, pw := io.Pipe()
+	go func() {
+		err := bio.Run(ctx, &Invocation{
+			Argv:   []string{"cat", "--", path},
+			Stdout: pw,
+			Stderr: stderr,
+		})
+		pw.CloseWithError(err)
+	}()
+	// Read a small chunk at the beginning to handle small files quickly and to
+	// catch errors.
+	buf := make([]byte, 4096)
+	n, err := pr.Read(buf)
+	buf = buf[:n]
+	if err == io.EOF {
+		// Small file. Just return the buffer.
+		cancel()
+		return io.NopCloser(bytes.NewReader(buf)), nil
+	}
+	if n == 0 {
+		cancel()
+		if stderr.Len() == 0 {
+			return nil, fmt.Errorf("open file %s: %w", path, err)
+		}
+		return nil, fmt.Errorf("open file %s: %s", path, strings.TrimSuffix(stderr.String(), "\n"))
+	}
+	return &catStream{
+		cancel: cancel,
+		buf:    buf,
+		r:      pr,
+	}, nil
+}
+
+type catStream struct {
+	cancel context.CancelFunc
+	buf    []byte
+	r      *io.PipeReader
+}
+
+func (cat *catStream) Read(p []byte) (int, error) {
+	if len(cat.buf) > 0 {
+		n := copy(p, cat.buf)
+		cat.buf = cat.buf[n:]
+		return n, nil
+	}
+	return cat.r.Read(p)
+}
+
+func (cat *catStream) Close() error {
+	cat.cancel()
+	cat.r.Close()
+	io.Copy(io.Discard, cat.r)
+	return nil
+}
+
+func forwardOpenFile(ctx context.Context, bio Biome, path string) (io.ReadCloser, error) {
+	opener, ok := bio.(fileOpener)
+	if !ok {
+		return nil, fmt.Errorf("open file %s: %w", path, ErrUnsupported)
+	}
+	return opener.OpenFile(ctx, path)
+}
 
 type fileWriter interface {
 	WriteFile(ctx context.Context, path string, src io.Reader) error

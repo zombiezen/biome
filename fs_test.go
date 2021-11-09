@@ -29,6 +29,72 @@ import (
 	"zombiezen.com/go/log/testlog"
 )
 
+func TestOpenFile(t *testing.T) {
+	junkHome := t.TempDir()
+	tests := []struct {
+		name     string
+		newBiome func(dir string) Biome
+	}{
+		{
+			name: "Local",
+			newBiome: func(dir string) Biome {
+				return Local{
+					WorkDir: dir,
+					HomeDir: junkHome,
+				}
+			},
+		},
+		{
+			name: "Fallback",
+			newBiome: func(dir string) Biome {
+				return forceFallback{Local{
+					WorkDir: dir,
+					HomeDir: junkHome,
+				}}
+			},
+		},
+		{
+			name: "Unsupported",
+			newBiome: func(dir string) Biome {
+				return unsupported{Local{
+					WorkDir: dir,
+					HomeDir: junkHome,
+				}}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const fname = "foo.txt"
+			const want = "Hello, World!\n"
+			ctx := testlog.WithTB(context.Background(), t)
+			dir := t.TempDir()
+			err := os.WriteFile(filepath.Join(dir, fname), []byte(want), 0o666)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bio := test.newBiome(dir)
+
+			rc, err := OpenFile(ctx, bio, fname)
+			if err != nil {
+				t.Error("OpenFile:", err)
+			}
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				t.Error("ReadAll:", err)
+			}
+			if err := rc.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+
+			if string(got) != want {
+				t.Errorf("%s content = %q; want %q", fname, got, want)
+			}
+		})
+	}
+}
+
 func TestWriteFile(t *testing.T) {
 	junkHome := t.TempDir()
 	tests := []struct {
@@ -244,6 +310,10 @@ type unsupported struct {
 	Biome
 }
 
+func (unsupported) OpenFile(ctx context.Context, path string) (io.ReadCloser, error) {
+	return nil, fmt.Errorf("open file %s: %w", path, ErrUnsupported)
+}
+
 func (unsupported) WriteFile(ctx context.Context, path string, src io.Reader) error {
 	return fmt.Errorf("write file %s: %w", path, ErrUnsupported)
 }
@@ -257,6 +327,7 @@ func (unsupported) EvalSymlinks(ctx context.Context, path string) (string, error
 }
 
 var _ interface {
+	fileOpener
 	fileWriter
 	dirMaker
 	symlinkEvaler
