@@ -224,14 +224,3 @@ func removeAll(ctx context.Context, path string) error {
 	}
 	return err
 }
-
-// endsWithDot reports whether the final component of path is ".".
-func endsWithDot(path string) bool {
-	if path == "." {
-		return true
-	}
-	if len(path) >= 2 && path[len(path)-1] == '.' && os.IsPathSeparator(path[len(path)-2]) {
-		return true
-	}
-	return false
-}

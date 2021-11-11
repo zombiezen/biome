@@ -22,10 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yourbase/commons/ini"
 	"go.starlark.net/starlark"
 	"go4.org/xdgdir"
 	"zombiezen.com/go/biome"
@@ -134,43 +132,6 @@ func (c *installCommand) run(ctx context.Context) (err error) {
 		return err
 	}
 	return nil
-}
-
-func toEnvFile(e biome.Environment) []byte {
-	if e.IsEmpty() {
-		return nil
-	}
-	f := new(ini.File)
-	keys := make([]string, 0, len(e.Vars)+1)
-	for k := range e.Vars {
-		keys = append(keys, k)
-	}
-	const pathVar = "PATH"
-	if e.Vars[pathVar] == "" && len(e.PrependPath)+len(e.AppendPath) > 0 {
-		keys = append(keys, pathVar)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		var v string
-		if k == pathVar {
-			parts := make([]string, 0, len(e.PrependPath)+len(e.AppendPath)+1)
-			parts = append(parts, e.PrependPath...)
-			if p := e.Vars[pathVar]; p != "" {
-				parts = append(parts, p)
-			}
-			parts = append(parts, e.AppendPath...)
-			// TODO(windows): List separator is not always ':'.
-			v = strings.Join(parts, ":")
-		} else {
-			v = e.Vars[k]
-		}
-		f.Set("", k, v)
-	}
-	data, err := f.MarshalText()
-	if err != nil {
-		panic(err)
-	}
-	return data
 }
 
 const threadContextKey = "zombiezen.com/go/biome.Context"

@@ -45,11 +45,6 @@ type replayData struct {
 	Invocations []*invocation
 }
 
-type joinPathLookup struct {
-	Elems  []string
-	Result string
-}
-
 // invocation is the result of a single command run.
 type invocation struct {
 	Argv        []string
