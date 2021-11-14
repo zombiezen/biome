@@ -18,83 +18,85 @@ package gitglob
 
 import "testing"
 
+var parseLineTests = []struct {
+	line          string
+	want          string
+	negate        bool
+	directoryOnly bool
+	matches       []string
+	doesNotMatch  []string
+}{
+	{line: ``, want: ``},
+	{line: ` `, want: ``},
+	{line: "\x80", want: ``},
+	{line: `# comment`, want: ``},
+	{line: `foo.txt`, want: `(^|.*/)foo\.txt$`},
+	{line: `\#file`, want: `(^|.*/)#file$`},
+	{line: ` foo`, want: `(^|.*/) foo$`},
+	{line: `foo `, want: `(^|.*/)foo$`},
+	{line: `foo\ `, want: `(^|.*/)foo $`},
+	{line: `foo\  `, want: `(^|.*/)foo $`},
+	{line: `!foo.txt`, want: `(^|.*/)foo\.txt$`, negate: true},
+	{line: `\!foo.txt`, want: `(^|.*/)!foo\.txt$`},
+	{line: `\!foo.txt`, want: `(^|.*/)!foo\.txt$`},
+	{line: `foo/bar`, want: `^foo/bar$`},
+	{line: `/foo/bar`, want: `^foo/bar$`},
+	{line: `/foo`, want: `^foo$`},
+	{line: `foo/`, want: `(^|.*/)foo$`, directoryOnly: true},
+	{line: `doc/frotz/`, want: `^doc/frotz$`, directoryOnly: true},
+	{line: `*.txt`, want: `(^|.*/)[^/]*\.txt$`}, // match leading dot
+	{line: `a*.txt`, want: `(^|.*/)a[^/]*\.txt$`},
+	{line: `.*.txt`, want: `(^|.*/)\.[^/]*\.txt$`},
+	{line: `foo?`, want: `(^|.*/)foo[^/]$`},
+	{line: `foo[a-zA-Z]`, want: `(^|.*/)foo[a-zA-Z]$`},
+	{line: `*foo[/]`, want: ``},
+	{line: `foo\[a-zA-Z]`, want: `(^|.*/)foo\[a-zA-Z\]$`},
+	{line: `foo[!a-zA-Z]`, want: `(^|.*/)foo[^a-zA-Z/]$`},
+	{
+		line: `foo[][!]`,
+		want: `(^|.*/)foo[\][!]$`,
+		matches: []string{
+			"foo]",
+			"foo[",
+			"foo!",
+		},
+	},
+	{line: `foo[]-]`, want: `(^|.*/)foo[\]\-]$`},
+	{
+		line: `foo[--0]`,
+		want: `(^|.*/)foo[-.0]$`,
+		matches: []string{
+			"foo-",
+			"foo.",
+			"foo0",
+		},
+	},
+	{
+		line: `foo[!--0]bar`,
+		want: `(^|.*/)foo[^--0/]bar$`,
+		matches: []string{
+			"fooxbar",
+		},
+		doesNotMatch: []string{
+			"foo-bar",
+			"foo.bar",
+			"foo/bar",
+			"foo0bar",
+		},
+	},
+	{line: `foo[a-]`, want: `(^|.*/)foo[a\-]$`},
+	{line: `foo[c-a]`, want: ``},
+	{line: `foo[[?*\]`, want: `(^|.*/)foo[\[?*\\]$`},
+	{line: `**/foo`, want: `(^|.*/)foo$`},
+	{line: `/**/foo`, want: `(^|.*/)foo$`},
+	{line: `**/foo/bar`, want: `(^|.*/)foo/bar$`},
+	{line: `abc/**`, want: `^abc/`},
+	{line: `a/**/b`, want: `^a/(|.+/)b$`},
+	{line: `abc/d**`, want: `^abc/d[^/]*[^/]*$`},
+}
+
 func TestParseLine(t *testing.T) {
-	tests := []struct {
-		line          string
-		want          string
-		negate        bool
-		directoryOnly bool
-		matches       []string
-		doesNotMatch  []string
-	}{
-		{line: ``, want: ``},
-		{line: ` `, want: ``},
-		{line: `# comment`, want: ``},
-		{line: `foo.txt`, want: `(^|.*/)foo\.txt$`},
-		{line: `\#file`, want: `(^|.*/)#file$`},
-		{line: ` foo`, want: `(^|.*/) foo$`},
-		{line: `foo `, want: `(^|.*/)foo$`},
-		{line: `foo\ `, want: `(^|.*/)foo $`},
-		{line: `foo\  `, want: `(^|.*/)foo $`},
-		{line: `!foo.txt`, want: `(^|.*/)foo\.txt$`, negate: true},
-		{line: `\!foo.txt`, want: `(^|.*/)!foo\.txt$`},
-		{line: `\!foo.txt`, want: `(^|.*/)!foo\.txt$`},
-		{line: `foo/bar`, want: `^foo/bar$`},
-		{line: `/foo/bar`, want: `^foo/bar$`},
-		{line: `/foo`, want: `^foo$`},
-		{line: `foo/`, want: `(^|.*/)foo$`, directoryOnly: true},
-		{line: `doc/frotz/`, want: `^doc/frotz$`, directoryOnly: true},
-		{line: `*.txt`, want: `(^|.*/)[^/]*\.txt$`}, // match leading dot
-		{line: `a*.txt`, want: `(^|.*/)a[^/]*\.txt$`},
-		{line: `.*.txt`, want: `(^|.*/)\.[^/]*\.txt$`},
-		{line: `foo?`, want: `(^|.*/)foo[^/]$`},
-		{line: `foo[a-zA-Z]`, want: `(^|.*/)foo[a-zA-Z]$`},
-		{line: `*foo[/]`, want: ``},
-		{line: `foo\[a-zA-Z]`, want: `(^|.*/)foo\[a-zA-Z\]$`},
-		{line: `foo[!a-zA-Z]`, want: `(^|.*/)foo[^a-zA-Z/]$`},
-		{
-			line: `foo[][!]`,
-			want: `(^|.*/)foo[\][!]$`,
-			matches: []string{
-				"foo]",
-				"foo[",
-				"foo!",
-			},
-		},
-		{line: `foo[]-]`, want: `(^|.*/)foo[\]\-]$`},
-		{
-			line: `foo[--0]`,
-			want: `(^|.*/)foo[-.0]$`,
-			matches: []string{
-				"foo-",
-				"foo.",
-				"foo0",
-			},
-		},
-		{
-			line: `foo[!--0]bar`,
-			want: `(^|.*/)foo[^--0/]bar$`,
-			matches: []string{
-				"fooxbar",
-			},
-			doesNotMatch: []string{
-				"foo-bar",
-				"foo.bar",
-				"foo/bar",
-				"foo0bar",
-			},
-		},
-		{line: `foo[a-]`, want: `(^|.*/)foo[a\-]$`},
-		{line: `foo[c-a]`, want: ``},
-		{line: `foo[[?*\]`, want: `(^|.*/)foo[\[?*\\]$`},
-		{line: `**/foo`, want: `(^|.*/)foo$`},
-		{line: `/**/foo`, want: `(^|.*/)foo$`},
-		{line: `**/foo/bar`, want: `(^|.*/)foo/bar$`},
-		{line: `abc/**`, want: `^abc/`},
-		{line: `a/**/b`, want: `^a/(|.+/)b$`},
-		{line: `abc/d**`, want: `^abc/d[^/]*[^/]*$`},
-	}
-	for _, test := range tests {
+	for _, test := range parseLineTests {
 		gotPattern := ParseLine(test.line)
 		got := ""
 		if gotPattern.re != nil {

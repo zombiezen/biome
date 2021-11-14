@@ -40,6 +40,9 @@ type Pattern struct {
 
 // ParseLine compiles a single pattern.
 func ParseLine(line string) Pattern {
+	if !utf8.ValidString(line) {
+		return Pattern{}
+	}
 	if strings.HasPrefix(line, "#") {
 		return Pattern{}
 	}
