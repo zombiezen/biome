@@ -18,17 +18,27 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 
+	"go4.org/xdgdir"
 	"zombiezen.com/go/biome"
+	"zombiezen.com/go/biome/internal/gitglob"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
+)
+
+const (
+	ignoreFileName       = ".biomeignore"
+	ignoreConfigFileName = "ignore"
 )
 
 // bundle writes a zip archive to out that contains any files that changed in
@@ -36,7 +46,13 @@ import (
 // value of bundle, or an empty/nil map if this is the first call. toRemove is a
 // list of files or directories that should be removed before extracting the
 // resulting zip archive.
-func bundle(ctx context.Context, out io.Writer, src fs.FS, prevStamps map[string]string) (newStamps map[string]string, toRemove []string, err error) {
+func bundle(ctx context.Context, out io.Writer, src fs.FS, globalIgnore []gitglob.Pattern, prevStamps map[string]string) (newStamps map[string]string, toRemove []string, err error) {
+	ignorePatterns := append([]gitglob.Pattern(nil), globalIgnore...)
+	ignorePatterns, err = readLocalIgnore(ignorePatterns, src)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	newStamps = make(map[string]string)
 	zw := zip.NewWriter(out)
 	err = fs.WalkDir(src, ".", func(path string, ent fs.DirEntry, err error) error {
@@ -44,7 +60,15 @@ func bundle(ctx context.Context, out io.Writer, src fs.FS, prevStamps map[string
 			log.Warnf(ctx, "Could not list %s: %v", path, err)
 			return nil
 		}
-		if path == "." {
+		if path == "." || path == ignoreFileName {
+			return nil
+		}
+		if pat := gitglob.LastMatch(ignorePatterns, path, ent.Type()); pat != nil && !pat.IsNegated() {
+			// Ignored.
+			log.Debugf(ctx, "Ignored %s due to rule %q", path, pat)
+			if ent.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		info, err := ent.Info()
@@ -122,6 +146,11 @@ func pushWorkDir(ctx context.Context, conn *sqlite.Conn, rec *biomeRecord, bio b
 			err = fmt.Errorf("push %s to %s: %v", rec.rootHostDir, rec.id, err)
 		}
 	}()
+	ignorePatterns, err := readGlobalIgnore()
+	if err != nil {
+		return err
+	}
+
 	defer sqlitex.Save(conn)(&err)
 
 	// Read previous stamps.
@@ -159,7 +188,7 @@ func pushWorkDir(ctx context.Context, conn *sqlite.Conn, rec *biomeRecord, bio b
 			log.Warnf(ctx, "Failed to clean up %s in biome: %v", zipPath, err)
 		}
 	}()
-	newStamps, toRemove, err := bundle(ctx, pw, os.DirFS(rec.rootHostDir), prevStamps)
+	newStamps, toRemove, err := bundle(ctx, pw, os.DirFS(rec.rootHostDir), ignorePatterns, prevStamps)
 	pw.Close()
 	writeErr := <-writeErrChan
 	if err != nil {
@@ -253,4 +282,29 @@ func marshalStamp(info fs.FileInfo) string {
 		uid,
 		gid,
 	)
+}
+
+func readGlobalIgnore() ([]gitglob.Pattern, error) {
+	paths := xdgdir.Config.SearchPaths()
+	for i, dir := range paths {
+		paths[i] = filepath.Join(dir, configSubdirName, ignoreConfigFileName)
+	}
+	return gitglob.ParseFiles(paths...)
+}
+
+func readLocalIgnore(dst []gitglob.Pattern, fsys fs.FS) ([]gitglob.Pattern, error) {
+	data, err := fs.ReadFile(fsys, ignoreFileName)
+	if errors.Is(err, fs.ErrNotExist) {
+		return dst, nil
+	}
+	if err != nil {
+		return dst, err
+	}
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		pat := gitglob.ParseLine(string(line))
+		if pat.IsValid() {
+			dst = append(dst, pat)
+		}
+	}
+	return dst, nil
 }

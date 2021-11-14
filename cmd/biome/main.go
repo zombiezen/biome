@@ -39,7 +39,10 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-const cacheSubdirName = "zombiezen-biome"
+const (
+	configSubdirName = "zombiezen-biome"
+	cacheSubdirName  = configSubdirName
+)
 
 const sqliteTimestampFormatMillis = "2006-01-02 15:04:05.999"
 

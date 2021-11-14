@@ -21,12 +21,54 @@ See https://git-scm.com/docs/gitignore#_pattern_format for syntax.
 package gitglob
 
 import (
+	"bytes"
+	"errors"
 	"io/fs"
+	"os"
 	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
+
+// ParseFiles parses files that contains gitignore-style patterns, one per line.
+// Patterns in later files in the argument list have less precedence (i.e.
+// appear earlier in the returned list) than files that appear earlier in the
+// argument list.
+//
+// ParseFiles returns the first error encountered that is not a file-not-found
+// error.
+func ParseFiles(files ...string) ([]Pattern, error) {
+	var patterns []Pattern
+	for i := len(files) - 1; i >= 0; i-- {
+		data, err := os.ReadFile(files[i])
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, line := range bytes.Split(data, []byte("\n")) {
+			pat := ParseLine(string(line))
+			if pat.IsValid() {
+				patterns = append(patterns, pat)
+			}
+		}
+	}
+	return patterns, nil
+}
+
+// LastMatch returns the last pattern in the list that matches the given path,
+// or nil if the path has no matching pattern.
+func LastMatch(patterns []Pattern, path string, mode fs.FileMode) *Pattern {
+	for i := len(patterns) - 1; i >= 0; i-- {
+		pat := &patterns[i]
+		if pat.Match(path, mode) {
+			return pat
+		}
+	}
+	return nil
+}
 
 // Pattern is the representation of a compiled glob pattern. A Pattern is safe
 // for concurrent use by multiple goroutines. The zero value is a Pattern that
@@ -201,10 +243,15 @@ func convertCharacterClass(re *strings.Builder, cc string) bool {
 	return true
 }
 
+// IsValid reports whether the pattern can match any files.
+func (pat Pattern) IsValid() bool {
+	return pat.re != nil
+}
+
 // Match reports whether the given slash-separated path matches the pattern.
 // If io/fs.ValidPath reports false, then Match will report false.
 func (pat Pattern) Match(path string, mode fs.FileMode) bool {
-	return pat.re != nil &&
+	return pat.IsValid() &&
 		(mode.IsDir() || !pat.directoryOnly) &&
 		fs.ValidPath(path) &&
 		pat.re.MatchString(path)

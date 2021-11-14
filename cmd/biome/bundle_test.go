@@ -92,6 +92,68 @@ func TestBuildArchive(t *testing.T) {
 			},
 		},
 		{
+			name: "FileIgnored",
+			srcs: []fs.FS{
+				fstest.MapFS{
+					"foo": {
+						Mode: 0o755 | fs.ModeDir,
+					},
+					"foo/bar.txt": {
+						Data: []byte("Hello, World!\n"),
+						Mode: 0o644,
+					},
+					"foo/zzz.txt": {
+						Data: []byte("Hello, World!\n"),
+						Mode: 0o644,
+					},
+					ignoreFileName: {
+						Data: []byte("/foo/bar.txt\n"),
+						Mode: 0o644,
+					},
+				},
+			},
+			want: []testZipFile{
+				{
+					name: "foo/",
+					mode: 0o755 | fs.ModeDir,
+				},
+				{
+					name:    "foo/zzz.txt",
+					mode:    0o644,
+					content: "Hello, World!\n",
+				},
+			},
+		},
+		{
+			name: "DirectoryIgnored",
+			srcs: []fs.FS{
+				fstest.MapFS{
+					"foo": {
+						Mode: 0o755 | fs.ModeDir,
+					},
+					"foo/bar.txt": {
+						Data: []byte("Hello, World!\n"),
+						Mode: 0o644,
+					},
+					"zzz.txt": {
+						Data: []byte("Hello, World!\n"),
+						Mode: 0o644,
+					},
+					ignoreFileName: {
+						Data: []byte("/foo/\n"),
+						Mode: 0o644,
+					},
+				},
+			},
+			want: []testZipFile{
+				{
+					name:    "zzz.txt",
+					mode:    0o644,
+					content: "Hello, World!\n",
+				},
+			},
+		},
+		{
 			name: "FileUnchanged",
 			srcs: []fs.FS{
 				fstest.MapFS{
@@ -275,14 +337,14 @@ func TestBuildArchive(t *testing.T) {
 			ctx := context.Background()
 			var stamps map[string]string
 			for i, src := range test.srcs[:len(test.srcs)-1] {
-				newStamps, _, err := bundle(ctx, io.Discard, src, stamps)
+				newStamps, _, err := bundle(ctx, io.Discard, src, nil, stamps)
 				if err != nil {
 					t.Fatalf("buildArchive(io.Discard, srcs[%d], %v): %v", i, stamps, err)
 				}
 				stamps = newStamps
 			}
 			buf := new(bytes.Buffer)
-			_, toRemove, err := bundle(ctx, buf, test.srcs[len(test.srcs)-1], stamps)
+			_, toRemove, err := bundle(ctx, buf, test.srcs[len(test.srcs)-1], nil, stamps)
 			if err != nil {
 				t.Errorf("buildArchive(buf, srcs[%d], %v): %v", len(test.srcs)-1, stamps, err)
 			}
