@@ -100,7 +100,7 @@ func (c *downloadCommand) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if strings.HasPrefix(relFile, ".."+string(filepath.Separator)) {
+		if !isSubFilepath(relFile) {
 			return fmt.Errorf("%s: not inside %s", file, rec.rootHostDir)
 		}
 		biomePath := biome.FromSlash(bio.Describe(), filepath.ToSlash(relFile))

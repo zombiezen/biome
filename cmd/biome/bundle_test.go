@@ -22,6 +22,9 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -37,12 +40,14 @@ func TestBuildArchive(t *testing.T) {
 		mode    fs.FileMode
 		content string
 	}
-	tests := []struct {
+	type buildArchiveTest struct {
 		name         string
 		srcs         []fs.FS
+		linkRoots    []string
 		want         []testZipFile
 		wantToRemove []string
-	}{
+	}
+	tests := []buildArchiveTest{
 		{
 			name: "Empty",
 			srcs: []fs.FS{
@@ -332,19 +337,139 @@ func TestBuildArchive(t *testing.T) {
 			},
 		},
 	}
+	if runtime.GOOS != "windows" {
+		dir1 := t.TempDir()
+		err := os.WriteFile(filepath.Join(dir1, "foo.txt"), []byte("Hello\n"), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = os.Symlink("foo.txt", filepath.Join(dir1, "bar"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests = append(tests, buildArchiveTest{
+			name:      "Symlink",
+			srcs:      []fs.FS{os.DirFS(dir1)},
+			linkRoots: []string{dir1},
+			want: []testZipFile{
+				{
+					name:    "foo.txt",
+					mode:    0o644,
+					content: "Hello\n",
+				},
+				{
+					name:    "bar",
+					mode:    0o777 | fs.ModeSymlink,
+					content: "foo.txt",
+				},
+			},
+		})
+
+		dir2 := t.TempDir()
+		err = os.WriteFile(filepath.Join(dir2, "foo.txt"), []byte("Hello\n"), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = os.WriteFile(filepath.Join(dir2, "baz.txt"), []byte("Hello\n"), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = os.Symlink("baz.txt", filepath.Join(dir2, "bar"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests = append(tests, buildArchiveTest{
+			name:      "ReplaceSymlink",
+			srcs:      []fs.FS{os.DirFS(dir1), os.DirFS(dir2)},
+			linkRoots: []string{dir1, dir2},
+			want: []testZipFile{
+				{
+					name:    "foo.txt",
+					mode:    0o644,
+					content: "Hello\n",
+				},
+				{
+					name:    "baz.txt",
+					mode:    0o644,
+					content: "Hello\n",
+				},
+				{
+					name:    "bar",
+					mode:    0o777 | fs.ModeSymlink,
+					content: "baz.txt",
+				},
+			},
+			wantToRemove: []string{"bar"},
+		})
+
+		dir3 := t.TempDir()
+		err = os.WriteFile(filepath.Join(dir3, "foo.txt"), []byte("Hello\n"), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(dir3, "bar"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err = os.Symlink(filepath.Join("..", "foo.txt"), filepath.Join(dir3, "bar", "link1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = os.Symlink(filepath.Join(dir3, "foo.txt"), filepath.Join(dir3, "bar", "link2"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests = append(tests, buildArchiveTest{
+			name:      "RewriteSymlink",
+			srcs:      []fs.FS{os.DirFS(dir3)},
+			linkRoots: []string{dir3},
+			want: []testZipFile{
+				{
+					name:    "foo.txt",
+					mode:    0o644,
+					content: "Hello\n",
+				},
+				{
+					name: "bar/",
+					mode: 0o755 | fs.ModeDir,
+				},
+				{
+					name:    "bar/link1",
+					mode:    0o777 | fs.ModeSymlink,
+					content: "../foo.txt",
+				},
+				{
+					name:    "bar/link2",
+					mode:    0o777 | fs.ModeSymlink,
+					content: "../foo.txt",
+				},
+			},
+		})
+	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			var stamps map[string]string
 			for i, src := range test.srcs[:len(test.srcs)-1] {
-				newStamps, _, err := bundle(ctx, io.Discard, src, nil, stamps)
+				opts := &bundleOptions{
+					prevStamps: stamps,
+				}
+				if i < len(test.linkRoots) {
+					opts.linkRoot = test.linkRoots[i]
+				}
+				newStamps, _, err := bundle(ctx, io.Discard, src, opts)
 				if err != nil {
 					t.Fatalf("buildArchive(io.Discard, srcs[%d], %v): %v", i, stamps, err)
 				}
 				stamps = newStamps
 			}
 			buf := new(bytes.Buffer)
-			_, toRemove, err := bundle(ctx, buf, test.srcs[len(test.srcs)-1], nil, stamps)
+			opts := &bundleOptions{
+				prevStamps: stamps,
+			}
+			if len(test.srcs)-1 < len(test.linkRoots) {
+				opts.linkRoot = test.linkRoots[len(test.srcs)-1]
+			}
+			_, toRemove, err := bundle(ctx, buf, test.srcs[len(test.srcs)-1], opts)
 			if err != nil {
 				t.Errorf("buildArchive(buf, srcs[%d], %v): %v", len(test.srcs)-1, stamps, err)
 			}

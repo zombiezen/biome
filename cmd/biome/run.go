@@ -20,7 +20,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -87,7 +86,7 @@ func (c *runCommand) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if strings.HasPrefix(relDir, ".."+string(filepath.Separator)) {
+	if !isSubFilepath(relDir) {
 		relDir = ""
 	}
 

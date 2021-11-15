@@ -26,6 +26,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"go4.org/xdgdir"
@@ -41,13 +43,26 @@ const (
 	ignoreConfigFileName = "ignore"
 )
 
+type bundleOptions struct {
+	globalIgnore []gitglob.Pattern
+	prevStamps   map[string]string
+
+	// If linkRoot is not empty, then it is assumed to be the OS filesystem directory
+	// that src refers to. This is only used for reading symbolic links.
+	// TODO(someday): https://golang.org/issue/49580 proposes adding a ReadLink method.
+	linkRoot string
+}
+
 // bundle writes a zip archive to out that contains any files that changed in
 // src since the last call to bundle. prevStamps should be the previous return
 // value of bundle, or an empty/nil map if this is the first call. toRemove is a
 // list of files or directories that should be removed before extracting the
 // resulting zip archive.
-func bundle(ctx context.Context, out io.Writer, src fs.FS, globalIgnore []gitglob.Pattern, prevStamps map[string]string) (newStamps map[string]string, toRemove []string, err error) {
-	ignorePatterns := append([]gitglob.Pattern(nil), globalIgnore...)
+func bundle(ctx context.Context, out io.Writer, src fs.FS, opts *bundleOptions) (newStamps map[string]string, toRemove []string, err error) {
+	if opts == nil {
+		opts = new(bundleOptions)
+	}
+	ignorePatterns := append([]gitglob.Pattern(nil), opts.globalIgnore...)
 	ignorePatterns, err = readLocalIgnore(ignorePatterns, src)
 	if err != nil {
 		return nil, nil, err
@@ -71,58 +86,100 @@ func bundle(ctx context.Context, out io.Writer, src fs.FS, globalIgnore []gitglo
 			}
 			return nil
 		}
+
+		// Check if the file needs to be changed.
 		info, err := ent.Info()
 		if err != nil {
 			return err
 		}
+		oldStamp := opts.prevStamps[path]
+		newStamp := readStamp(src, path, info)
+		newStamps[path] = newStamp
+		if oldStamp == newStamp && !info.IsDir() {
+			log.Debugf(ctx, "%s has not changed", path)
+			return nil
+		}
+		log.Debugf(ctx, "%s stamp %q -> %q", path, oldStamp, newStamp)
 
-		oldStamp := prevStamps[path]
-		if info.IsDir() {
-			if oldStamp != dirStamp && oldStamp != "" {
-				log.Debugf(ctx, "%s stamp %q -> %q", path, oldStamp, dirStamp)
+		switch info.Mode().Type() {
+		case fs.ModeDir:
+			if oldStamp != "" && oldStamp != dirStamp {
 				toRemove = append(toRemove, path)
 			}
-			newStamps[path] = dirStamp
 			hdr, err := zip.FileInfoHeader(info)
 			if err != nil {
 				return err
 			}
 			hdr.Name = path + "/"
-			_, err = zw.CreateHeader(hdr)
-			return err
-		}
+			if _, err := zw.CreateHeader(hdr); err != nil {
+				return err
+			}
+		case fs.ModeSymlink:
+			if opts.linkRoot == "" {
+				return fmt.Errorf("%s: found symlink on unsupported file system", path)
+			}
+			linkPath := filepath.Join(opts.linkRoot, filepath.FromSlash(path))
+			rawLinkTarget, err := os.Readlink(linkPath)
+			if err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+			absLinkTarget := filepath.Clean(rawLinkTarget)
+			if !filepath.IsAbs(rawLinkTarget) {
+				absLinkTarget = filepath.Join(filepath.Dir(linkPath), rawLinkTarget)
+			}
+			if linkTargetRelTop, err := filepath.Rel(opts.linkRoot, absLinkTarget); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			} else if !isSubFilepath(linkTargetRelTop) {
+				return fmt.Errorf("%s: symlink refers to %s which is outside %s", path, rawLinkTarget, opts.linkRoot)
+			}
+			relLinkTarget, err := filepath.Rel(filepath.Dir(linkPath), absLinkTarget)
+			if err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+			relLinkTarget = filepath.ToSlash(relLinkTarget)
 
-		if info.Mode().Type() != 0 {
-			return fmt.Errorf("%s: TODO(soon): only able to handle regular files", path)
-		}
-		if oldStamp == dirStamp {
-			toRemove = append(toRemove, path)
-		}
-		newStamp := readStamp(src, path, info)
-		newStamps[path] = newStamp
-		if oldStamp == newStamp {
-			log.Debugf(ctx, "%s has not changed", path)
-			return nil
-		}
+			if oldStamp != "" {
+				// Symlinks must be removed to be replaced.
+				toRemove = append(toRemove, path)
+			}
+			hdr, err := zip.FileInfoHeader(info)
+			if err != nil {
+				return err
+			}
+			hdr.Name = path
+			hdr.UncompressedSize64 = uint64(len(relLinkTarget))
+			w, err := zw.CreateHeader(hdr)
+			if err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, relLinkTarget); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+		case 0: // regular file
+			if oldStamp != "" && stampMode(oldStamp).Type() != 0 {
+				toRemove = append(toRemove, path)
+			}
 
-		log.Debugf(ctx, "%s stamp %q -> %q", path, oldStamp, newStamp)
-		f, err := src.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		hdr, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return fmt.Errorf("%s: %v", path, err)
-		}
-		hdr.Name = path
-		hdr.Method = zip.Deflate
-		w, err := zw.CreateHeader(hdr)
-		if err != nil {
-			return fmt.Errorf("%s: %v", path, err)
-		}
-		if _, err := io.Copy(w, f); err != nil {
-			return fmt.Errorf("%s: %v", path, err)
+			f, err := src.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			hdr, err := zip.FileInfoHeader(info)
+			if err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+			hdr.Name = path
+			hdr.Method = zip.Deflate
+			w, err := zw.CreateHeader(hdr)
+			if err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+			if _, err := io.Copy(w, f); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+		default:
+			return fmt.Errorf("%s: not a file, directory, or symlink", path)
 		}
 		return nil
 	})
@@ -132,7 +189,7 @@ func bundle(ctx context.Context, out io.Writer, src fs.FS, globalIgnore []gitglo
 	if err := zw.Close(); err != nil {
 		return nil, nil, err
 	}
-	for path := range prevStamps {
+	for path := range opts.prevStamps {
 		if newStamps[path] == "" {
 			toRemove = append(toRemove, path)
 		}
@@ -188,7 +245,11 @@ func pushWorkDir(ctx context.Context, conn *sqlite.Conn, rec *biomeRecord, bio b
 			log.Warnf(ctx, "Failed to clean up %s in biome: %v", zipPath, err)
 		}
 	}()
-	newStamps, toRemove, err := bundle(ctx, pw, os.DirFS(rec.rootHostDir), ignorePatterns, prevStamps)
+	newStamps, toRemove, err := bundle(ctx, pw, os.DirFS(rec.rootHostDir), &bundleOptions{
+		globalIgnore: ignorePatterns,
+		prevStamps:   prevStamps,
+		linkRoot:     rec.rootHostDir,
+	})
 	pw.Close()
 	writeErr := <-writeErrChan
 	if err != nil {
@@ -284,6 +345,21 @@ func marshalStamp(info fs.FileInfo) string {
 	)
 }
 
+func stampMode(stamp string) fs.FileMode {
+	if stamp == dirStamp {
+		return fs.ModeDir | 0o777
+	}
+	parts := strings.Split(stamp, "-")
+	if len(parts) < 4 {
+		return 0
+	}
+	mode, err := strconv.ParseUint(parts[3], 10, 32)
+	if err != nil {
+		return 0
+	}
+	return fs.FileMode(mode)
+}
+
 func readGlobalIgnore() ([]gitglob.Pattern, error) {
 	paths := xdgdir.Config.SearchPaths()
 	for i, dir := range paths {
@@ -307,4 +383,11 @@ func readLocalIgnore(dst []gitglob.Pattern, fsys fs.FS) ([]gitglob.Pattern, erro
 		}
 	}
 	return dst, nil
+}
+
+// isSubFilepath reports whether a relative path is a strict subpath: that is,
+// it does reference a file outside the working directory.
+func isSubFilepath(path string) bool {
+	path = filepath.Clean(path)
+	return !(len(path) >= 3 && path[:2] == ".." && os.IsPathSeparator(path[2]))
 }
