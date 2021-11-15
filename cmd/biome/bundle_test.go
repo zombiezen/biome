@@ -338,6 +338,14 @@ func TestBuildArchive(t *testing.T) {
 		},
 	}
 	if runtime.GOOS != "windows" {
+		permOf := func(path string) fs.FileMode {
+			info, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return info.Mode().Perm()
+		}
+
 		dir1 := t.TempDir()
 		err := os.WriteFile(filepath.Join(dir1, "foo.txt"), []byte("Hello\n"), 0o644)
 		if err != nil {
@@ -354,12 +362,12 @@ func TestBuildArchive(t *testing.T) {
 			want: []testZipFile{
 				{
 					name:    "foo.txt",
-					mode:    0o644,
+					mode:    permOf(filepath.Join(dir1, "foo.txt")),
 					content: "Hello\n",
 				},
 				{
 					name:    "bar",
-					mode:    0o777 | fs.ModeSymlink,
+					mode:    permOf(filepath.Join(dir1, "bar")) | fs.ModeSymlink,
 					content: "foo.txt",
 				},
 			},
@@ -385,17 +393,17 @@ func TestBuildArchive(t *testing.T) {
 			want: []testZipFile{
 				{
 					name:    "foo.txt",
-					mode:    0o644,
+					mode:    permOf(filepath.Join(dir2, "foo.txt")),
 					content: "Hello\n",
 				},
 				{
 					name:    "baz.txt",
-					mode:    0o644,
+					mode:    permOf(filepath.Join(dir2, "baz.txt")),
 					content: "Hello\n",
 				},
 				{
 					name:    "bar",
-					mode:    0o777 | fs.ModeSymlink,
+					mode:    permOf(filepath.Join(dir2, "bar")) | fs.ModeSymlink,
 					content: "baz.txt",
 				},
 			},
@@ -425,21 +433,21 @@ func TestBuildArchive(t *testing.T) {
 			want: []testZipFile{
 				{
 					name:    "foo.txt",
-					mode:    0o644,
+					mode:    permOf(filepath.Join(dir3, "foo.txt")),
 					content: "Hello\n",
 				},
 				{
 					name: "bar/",
-					mode: 0o755 | fs.ModeDir,
+					mode: permOf(filepath.Join(dir3, "bar")) | fs.ModeDir,
 				},
 				{
 					name:    "bar/link1",
-					mode:    0o777 | fs.ModeSymlink,
+					mode:    permOf(filepath.Join(dir3, "bar", "link1")) | fs.ModeSymlink,
 					content: "../foo.txt",
 				},
 				{
 					name:    "bar/link2",
-					mode:    0o777 | fs.ModeSymlink,
+					mode:    permOf(filepath.Join(dir3, "bar", "link2")) | fs.ModeSymlink,
 					content: "../foo.txt",
 				},
 			},
