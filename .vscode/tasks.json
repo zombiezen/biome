@@ -1,0 +1,27 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "redo",
+			"target": "all",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": [
+				"$go"
+			],
+			"label": "redo: all"
+		},
+		{
+			"type": "redo",
+			"target": "test",
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"problemMatcher": ["$go"],
+			"label": "redo: test"
+		}
+	]
+}

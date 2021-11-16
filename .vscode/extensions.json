@@ -1,0 +1,7 @@
+{
+	"recommendations": [
+		"golang.go",
+		"timonwong.shellcheck",
+		"zombiezen.redo"
+	]
+}
