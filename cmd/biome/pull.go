@@ -31,15 +31,15 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-type downloadCommand struct {
+type pullCommand struct {
 	biomeID string
 	files   []string
 }
 
-func newDownloadCommand() *cobra.Command {
-	c := new(downloadCommand)
+func newPullCommand() *cobra.Command {
+	c := new(pullCommand)
 	cmd := &cobra.Command{
-		Use:                   "download [options] FILE [...]",
+		Use:                   "pull [options] FILE [...]",
 		DisableFlagsInUseLine: true,
 		Short:                 "copy a file from the biome into the working directory",
 		Args:                  cobra.MinimumNArgs(1),
@@ -54,7 +54,7 @@ func newDownloadCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *downloadCommand) run(ctx context.Context) error {
+func (c *pullCommand) run(ctx context.Context) error {
 	var rec *biomeRecord
 	var bio biome.Biome
 	err := func() (err error) {

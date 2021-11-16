@@ -60,9 +60,9 @@ func main() {
 	root.AddCommand(
 		newCreateCommand(),
 		newDestroyCommand(),
-		newDownloadCommand(),
 		newInstallCommand(),
 		newListCommand(),
+		newPullCommand(),
 		newRunCommand(),
 	)
 
